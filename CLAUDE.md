@@ -32,6 +32,10 @@ Three tiers, wired as in `design/komponentendiagramm.plantuml` and `design/seque
 
 Hardware calls are guarded by `#ifdef REAL`. `server/real.h` holds `//#define REAL` (commented out = simulation: no head/receiver access, `loop.c` emits a synthetic Gaussian lobe). Uncomment it to build against real hardware; every file that needs it includes `real.h`.
 
+## Versioning
+
+Semver; `package.json` `version` is the single source. The Makefile passes it to the server as `ANTSCAN_VERSION` (`--version`, startup log, `version` message to the UI footer). To release: bump `package.json` and `package-lock.json`, commit, `git tag vX.Y.Z`.
+
 ## Gotchas
 
 - `-std=c18` with `-D_GNU_SOURCE`. `rsvisa` (R&S VISA) must be installed to compile/link; it is needed even in simulation mode.

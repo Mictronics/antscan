@@ -24,7 +24,7 @@
 #include "real.h"
 
 static error_t parse_opt(int key, char *arg, struct argp_state *state);
-const char *argp_program_version = "antscan 1.0";
+const char *argp_program_version = "antscan " ANTSCAN_VERSION;
 const char args_doc[] = "";
 const char doc[] = "Antenna gain pattern measurement server.";
 static struct argp argp = {options, parse_opt, args_doc, doc, NULL, NULL, NULL};
@@ -554,6 +554,7 @@ static int callback_broadcast(struct lws *wsi, enum lws_callback_reasons reason,
         uv_mutex_unlock(&msg_lock);
         /* Tell the new client where we are */
         app_status();
+        app_version();
         break;
 
     case LWS_CALLBACK_CLOSED:
@@ -661,6 +662,10 @@ void app_status()
 /**
  * Tell web application that a long running operation ("scan", "home", "check") ended.
  */
+void app_version()
+{
+    ws_send_cmd("version", json_object_new_string(ANTSCAN_VERSION));
+}
 void app_done(const char *what)
 {
     ws_send_cmd("done", json_object_new_string(what));
@@ -866,6 +871,8 @@ int main(int argc, char **argv)
         lwsl_err("libwebsocket init failed\n");
         return EXIT_FAILURE;
     }
+
+    lwsl_notice("antscan %s\n", ANTSCAN_VERSION);
 
     // Infinite loop, to end this server send SIGTERM. (CTRL+C) */
     for (;;)

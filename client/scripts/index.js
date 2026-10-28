@@ -151,6 +151,9 @@ function wsConnect() {
       case 'status':
         app_status_handler(msg.data);
         break;
+      case 'version':
+        byId('appVersion').textContent = `antscan ${msg.data}`;
+        break;
       case 'done':
         handleDone(msg.data);
         break;
