@@ -1,4 +1,4 @@
-/* global bootstrap, append, init_plot, draw_plot */
+/* global bootstrap, append, init_plot, draw_plot, export_csv, export_png */
 /* exported liveDataStatus, liveDataStatusEl, liveDataStatusAz */
 /**
  * See Javascript ES6 format for code style.
@@ -485,6 +485,8 @@ document.addEventListener('DOMContentLoaded', () => {
       init_dropdown(data[9], data[11], data[4], data[5], data[6], data[2], data[3]);
     }
   });
+  byId('button_export_csv').addEventListener('click', export_csv);
+  byId('button_export_png').addEventListener('click', export_png);
   byId('button_start').addEventListener('click', () => {
     if (sendServerCommand([ServerCommand.CmdStart, 1])) {
       setTimeButtonState(true);

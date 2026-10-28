@@ -1,5 +1,5 @@
 /* global Plotly, liveDataStatus, liveDataStatusEl, liveDataStatusAz */
-/* exported init_plot, append, draw_plot */
+/* exported init_plot, append, draw_plot, export_csv, export_png */
 
 /* Measurement data per frequency (MHz as string): { azimut: [], elevation: [], gain: [] } */
 let m_data = {};
@@ -149,11 +149,49 @@ function analyze(radius, theta) {
     };
 }
 
-function showStats(radius, theta) {
+function statsText(radius, theta) {
     const s = analyze(radius, theta);
     const fmt = (v, unit) => (v === null ? 'n/a' : `${v.toFixed(1)}${unit}`);
-    document.getElementById('stats').textContent = s ?
-        `Peak ${s.peak.toFixed(1)} dB at ${s.peakAz}° | HPBW ${fmt(s.hpbw, '°')} | Front-to-back ${fmt(s.fb, ' dB')}` : '';
+    return s ? `Peak ${s.peak.toFixed(1)} dB at ${s.peakAz}° | HPBW ${fmt(s.hpbw, '°')} | Front-to-back ${fmt(s.fb, ' dB')}` : '';
+}
+
+function showStats(radius, theta) {
+    document.getElementById('stats').textContent = statsText(radius, theta);
+}
+
+function download(blob, filename) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+/**
+ * CSV of the selected frequency in the layout of the server files (TILT/PAN header, signed
+ * azimut columns), unmeasured cells empty. Stats of the displayed azimut cut are appended as # lines.
+ */
+function export_csv() {
+    const frequency = freqList[liveDataStatus];
+    const data = m_data[frequency];
+    if (!data || !data.gain.length) {
+        return;
+    }
+    const signed = (az) => (az >= 180 ? az - 360 : az);
+    const azList = [...new Set(data.azimut.map(signed))].sort((a, b) => a - b);
+    const elList = [...new Set(data.elevation)].sort((a, b) => a - b);
+    const cells = new Map(data.gain.map((g, i) => [`${data.elevation[i]};${signed(data.azimut[i])}`, g]));
+    const lines = [`MEASURE_FREQ:${frequency};`, `TILT/PAN;${azList.join(';')};`];
+    elList.forEach((el) => lines.push(`${el};${azList.map((az) => cells.get(`${el};${az}`)?.toFixed(1) ?? '').join(';')};`));
+    const [r1, theta1] = slice(data, 'elevation', liveDataStatusEl, 'azimut');
+    lines.push(`# Azimut cut at ${liveDataStatusEl}° elevation: ${statsText(r1, theta1)}`);
+    download(new Blob([lines.join('\n') + '\n'], { type: 'text/csv' }), `antscan_${frequency}MHz.csv`);
+}
+
+function export_png() {
+    const frequency = freqList[liveDataStatus];
+    ['dataField', 'dataField2', 'dataField3'].forEach((id) =>
+        Plotly.downloadImage(id, { format: 'png', filename: `antscan_${frequency}MHz_${id}` }));
 }
 
 function draw_plot() {
