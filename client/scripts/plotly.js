@@ -20,6 +20,18 @@ function init_plot(testFrequency, len) {
     draw_plot();
 }
 
+/* Replay delivers many points back to back, so draw at most once per frame */
+let drawQueued = false;
+function schedule_draw() {
+    if (!drawQueued) {
+        drawQueued = true;
+        requestAnimationFrame(() => {
+            drawQueued = false;
+            draw_plot();
+        });
+    }
+}
+
 function deg2rad(degree) {
     return degree * (Math.PI / 180);
 }
@@ -32,7 +44,7 @@ function append(azimut, elevation, frequency, gain) {
     data.azimut.push(azimut);
     data.elevation.push(elevation);
     data.gain.push(parseFloat(gain.toFixed(1)));
-    draw_plot();
+    schedule_draw();
 }
 
 function polarLayout(title, sector) {

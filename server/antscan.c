@@ -88,12 +88,39 @@ static struct ws_msg msg_queue[MSG_QUEUE_LEN];
 static unsigned long msg_count = 0; /* total messages queued, next sequence number */
 static uv_mutex_t msg_lock;
 
+/* Scan state for clients that connect mid-scan or after a reload, guarded by msg_lock */
+struct point_rec
+{
+    int16_t az, el;
+    uint16_t freq;
+    float gain;
+};
+static struct point_rec *points;
+static size_t points_count, points_cap;
+static char config_msg[MSG_MAX_LEN]; /* "config" message of the last calibration, empty if none */
+static size_t config_len;
+static int last_progress[3];
+static bool has_progress;
+
+#define REPLAY_CHUNK 12 /* points per message, keeps a chunk below MSG_MAX_LEN */
+
+/* A new client first gets config, points and progress, then continues on the shared ring */
+enum replay_stage
+{
+    REPLAY_DONE = 0,
+    REPLAY_CONFIG,
+    REPLAY_POINTS,
+    REPLAY_PROGRESS
+};
+
 /**
  * One of these is created for each client connecting.
  */
 struct per_session_data
 {
     unsigned long next_seq; /* next message sequence number to send */
+    enum replay_stage stage;
+    size_t replay_pos, replay_end; /* points [pos, end) are still to be replayed */
 };
 
 /**
@@ -241,6 +268,8 @@ void free_freq(void)
     freq = NULL;
     freq_counter = 0;
 }
+
+static void set_config(json_object *jarr);
 
 static bool get_int(json_object *jarr, int idx, int lo, int hi, int *out)
 {
@@ -393,6 +422,7 @@ static void handle_client_request(void *in, size_t len)
             app_status();
             break;
         }
+        set_config(jarr);
         start_job(SERVER_CMD_CALIBRATE_ANTENNA, 0);
         break;
     case SERVER_CMD_SCAN_START:
@@ -482,10 +512,23 @@ static void handle_client_request(void *in, size_t len)
     json_object_put(jarr);
 }
 
+static bool grow_points(void)
+{
+    size_t cap = points_cap ? points_cap * 2 : 1024;
+    struct point_rec *p = realloc(points, cap * sizeof *p);
+    if (p == NULL)
+    {
+        return false;
+    }
+    points = p;
+    points_cap = cap;
+    return true;
+}
+
 /**
  * Queue a json object for all clients and release it. Safe to call from any thread.
  */
-static void ws_send(json_object *jobj)
+static void ws_send(json_object *jobj, const struct point_rec *pt)
 {
     size_t len = 0;
     const char *p = json_object_to_json_string_length(jobj, JSON_C_TO_STRING_PLAIN, &len);
@@ -496,11 +539,68 @@ static void ws_send(json_object *jobj)
         memcpy(&msg->buf[LWS_PRE], p, len);
         msg->len = len;
         msg_count++;
+        /* Stored under the same lock, so a connecting client sees each point exactly once */
+        if (pt != NULL && (points_count < points_cap || grow_points()))
+        {
+            points[points_count++] = *pt;
+        }
         uv_mutex_unlock(&msg_lock);
         /* Wakes the service thread, which then writes to all clients */
         lws_cancel_service(context);
     }
     json_object_put(jobj);
+}
+
+/**
+ * Send the next replay message to a client that just connected. Writes at most one message.
+ */
+static int replay_step(struct lws *wsi, struct per_session_data *pss)
+{
+    unsigned char buf[LWS_PRE + MSG_MAX_LEN];
+    char *out = (char *)&buf[LWS_PRE];
+    int len = 0;
+    uv_mutex_lock(&msg_lock);
+    if (pss->stage == REPLAY_CONFIG)
+    {
+        memcpy(out, config_msg, config_len);
+        len = config_len;
+        pss->stage = REPLAY_POINTS;
+    }
+    else if (pss->stage == REPLAY_POINTS)
+    {
+        /* A new calibration may have cleared the store while this client was replaying */
+        size_t end = pss->replay_end < points_count ? pss->replay_end : points_count;
+        if (pss->replay_pos < end)
+        {
+            len = snprintf(out, MSG_MAX_LEN, "{\"cmd\":\"points\",\"data\":[");
+            for (int i = 0; i < REPLAY_CHUNK && pss->replay_pos < end; i++, pss->replay_pos++)
+            {
+                const struct point_rec *pt = &points[pss->replay_pos];
+                len += snprintf(out + len, MSG_MAX_LEN - len, "%s[%d,%d,%d,%.1f]", i ? "," : "",
+                                pt->az, pt->el, pt->freq, pt->gain);
+            }
+            len += snprintf(out + len, MSG_MAX_LEN - len, "]}");
+        }
+        else
+        {
+            pss->stage = REPLAY_PROGRESS;
+        }
+    }
+    if (len == 0 && pss->stage == REPLAY_PROGRESS)
+    {
+        pss->stage = REPLAY_DONE;
+        if (has_progress)
+        {
+            len = snprintf(out, MSG_MAX_LEN, "{\"cmd\":\"progress\",\"data\":[%d,%d,%d]}",
+                           last_progress[0], last_progress[1], last_progress[2]);
+        }
+    }
+    uv_mutex_unlock(&msg_lock);
+    if (len > 0 && lws_write(wsi, (unsigned char *)out, len, LWS_WRITE_TEXT) < 0)
+    {
+        return -1;
+    }
+    return 0;
 }
 
 /**
@@ -551,6 +651,9 @@ static int callback_broadcast(struct lws *wsi, enum lws_callback_reasons reason,
         lwsl_notice("Client connected.\n");
         uv_mutex_lock(&msg_lock);
         pss->next_seq = msg_count;
+        pss->stage = config_len > 0 ? REPLAY_CONFIG : REPLAY_DONE;
+        pss->replay_pos = 0;
+        pss->replay_end = points_count;
         uv_mutex_unlock(&msg_lock);
         /* Tell the new client where we are */
         app_status();
@@ -568,6 +671,15 @@ static int callback_broadcast(struct lws *wsi, enum lws_callback_reasons reason,
 
     case LWS_CALLBACK_SERVER_WRITEABLE:
     {
+        if (pss->stage != REPLAY_DONE)
+        {
+            if (replay_step(wsi, pss) < 0)
+            {
+                return -1;
+            }
+            lws_callback_on_writable(wsi);
+            break;
+        }
         int m = 0;
         bool more = false;
         uv_mutex_lock(&msg_lock);
@@ -648,7 +760,7 @@ static void ws_send_cmd(const char *cmd, json_object *data)
     json_object *jobj = json_object_new_object();
     json_object_object_add(jobj, "cmd", json_object_new_string(cmd));
     json_object_object_add(jobj, "data", data);
-    ws_send(jobj);
+    ws_send(jobj, NULL);
 }
 
 /**
@@ -662,6 +774,27 @@ void app_status()
 /**
  * Tell web application that a long running operation ("scan", "home", "check") ended.
  */
+/**
+ * Remember the accepted calibration frame for clients that connect later, drop the data of the
+ * previous scan, and tell all clients to set up for the new one.
+ */
+static void set_config(json_object *jarr)
+{
+    json_object *jobj = json_object_new_object();
+    json_object_object_add(jobj, "cmd", json_object_new_string("config"));
+    json_object_object_add(jobj, "data", json_object_get(jarr));
+    size_t len = 0;
+    const char *p = json_object_to_json_string_length(jobj, JSON_C_TO_STRING_PLAIN, &len);
+    uv_mutex_lock(&msg_lock);
+    /* Too long for one message: new clients get no replay */
+    config_len = len <= sizeof config_msg ? len : 0;
+    memcpy(config_msg, p, config_len);
+    points_count = 0;
+    has_progress = false;
+    uv_mutex_unlock(&msg_lock);
+    ws_send(jobj, NULL);
+}
+
 void app_version()
 {
     ws_send_cmd("version", json_object_new_string(ANTSCAN_VERSION));
@@ -681,7 +814,11 @@ void app_measurement_point(int az, int el, int freq, double val)
     json_object_array_add(jarr, json_object_new_int(el));
     json_object_array_add(jarr, json_object_new_int(freq));
     json_object_array_add(jarr, json_object_new_double(val));
-    ws_send_cmd("point", jarr);
+    json_object *jobj = json_object_new_object();
+    json_object_object_add(jobj, "cmd", json_object_new_string("point"));
+    json_object_object_add(jobj, "data", jarr);
+    struct point_rec pt = {.az = az, .el = el, .freq = freq, .gain = val};
+    ws_send(jobj, &pt);
 }
 
 void app_progress(double progress, double totalTime, double timeLeft)
@@ -690,6 +827,12 @@ void app_progress(double progress, double totalTime, double timeLeft)
     json_object_array_add(jarr, json_object_new_int(progress));
     json_object_array_add(jarr, json_object_new_int(totalTime));
     json_object_array_add(jarr, json_object_new_int(timeLeft));
+    uv_mutex_lock(&msg_lock);
+    last_progress[0] = progress;
+    last_progress[1] = totalTime;
+    last_progress[2] = timeLeft;
+    has_progress = true;
+    uv_mutex_unlock(&msg_lock);
     ws_send_cmd("progress", jarr);
 }
 

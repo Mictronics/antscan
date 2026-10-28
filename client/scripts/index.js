@@ -157,10 +157,15 @@ function wsConnect() {
       case 'done':
         handleDone(msg.data);
         break;
+      case 'config':
+        applyConfig(msg.data);
+        break;
       case 'point':
-        append(msg.data[0], msg.data[1], msg.data[2], msg.data[3]);
-        setBoth('currentAzimut', `Current Azimut: ${msg.data[0]}`);
-        setBoth('currentElevation', `Current Elevation: ${msg.data[1]}`);
+        showPoint(msg.data);
+        break;
+      case 'points':
+        /* Replay for a client that connected mid-scan or after a reload */
+        msg.data.forEach(showPoint);
         break;
       case 'progress':
         setProgress(msg.data[0]);
@@ -381,6 +386,36 @@ function createTiltData() {
   return mark(['inputTiltPosition'], isIntIn(tilt, -90, 90)) ? tilt : false;
 }
 
+function showPoint([az, el, freq, gain]) {
+  append(az, el, freq, gain);
+  setBoth('currentAzimut', `Current Azimut: ${az}`);
+  setBoth('currentElevation', `Current Elevation: ${el}`);
+}
+
+/**
+ * Fill the form from a calibration frame and set up plots and dropdowns for that scan.
+ */
+function applyConfig(data) {
+  const set = (id, value) => {
+    byId(id).value = value;
+  };
+  /* The server treats an empty or all zero name as "use timestamp" */
+  set('inputFilename', /^0*$/.test(data[1]) ? '' : data[1]);
+  set('inputAzimutAngle', data[2]);
+  set('inputAzimutResolution', data[3]);
+  set('inputElevStartAngle', data[4]);
+  set('inputElevStopAngle', data[5]);
+  set('inputElevResolution', data[6]);
+  set('inputStartFrequency', data[7]);
+  set('inputStopFrequency', data[8]);
+  set('inputMeasureFrequency', data[9].join(','));
+  set('inputGainRefAntenna', data[10].join(','));
+  byId('inputSerpentine').checked = data[12] === 1;
+  setProgress(0);
+  init_plot(data[9], data[11]);
+  init_dropdown(data[9], data[11], data[4], data[5], data[6], data[2], data[3]);
+}
+
 function app_status_handler(status) {
   const enable = (id, on) => byId(id).classList.toggle('disabled', !on);
   const has3dData = () => byId('elevationDropdown').childElementCount > 1;
@@ -399,6 +434,7 @@ function app_status_handler(status) {
       enable('button_start', true);
       break;
     case AppStatus.Running:
+    case AppStatus.Paused: {
       enable('button_calib', false);
       enable('button_start', false);
       enable('button_headcmd', false);
@@ -406,11 +442,12 @@ function app_status_handler(status) {
       enable('button_data', true);
       enable('button_data3d', has3dData());
       enable('button_pause', true);
-      byId('button_pause').classList.replace('btn-warning', 'btn-light');
+      setTimeButtonState(true);
+      /* Also correct after a reload, where the page never saw the Running state */
+      const paused = status === AppStatus.Paused;
+      byId('button_pause').classList.replace(paused ? 'btn-light' : 'btn-warning', paused ? 'btn-warning' : 'btn-light');
       break;
-    case AppStatus.Paused:
-      byId('button_pause').classList.replace('btn-light', 'btn-warning');
-      break;
+    }
     default:
       break;
   }
@@ -480,9 +517,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     if (sendServerCommand(data)) {
-      setProgress(0);
-      init_plot(data[9], data[11]);
-      init_dropdown(data[9], data[11], data[4], data[5], data[6], data[2], data[3]);
+      applyConfig(data);
     }
   });
   byId('button_export_csv').addEventListener('click', export_csv);
