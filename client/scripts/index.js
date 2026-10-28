@@ -365,7 +365,7 @@ function createDataFrame() {
 
   /* Server treats empty or all zero names as "use timestamp" */
   return [ServerCommand.CmdCalib, filename || '0'.repeat(24), azAngle, azResolution, elStart, elStop, elResolution,
-    startFrequency, stopFrequency, testFrequency, refGain, testFrequency.length];
+    startFrequency, stopFrequency, testFrequency, refGain, testFrequency.length, byId('inputSerpentine').checked ? 1 : 0];
 }
 
 function createPanData() {

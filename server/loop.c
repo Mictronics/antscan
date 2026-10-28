@@ -10,11 +10,13 @@
 #include "receiver.h"
 
 #include "real.h"
+#include <math.h>
 
 extern int start_f, stop_f, freq_counter;
 extern char file_name[25];
 extern uint16_t start_azimut, stop_azimut, n;
 extern int16_t start_elev, stop_elev, resolution_elev, m, azimut_sector, resolution_azimut;
+extern bool serpentine;
 extern Frequency* freq;
 extern uv_mutex_t lock_pause_measurement;
 extern uv_cond_t cond_resume_measurement;
@@ -23,6 +25,13 @@ extern bool measurement_thread_pause;
 extern _Atomic scan_status_e scan_status;
 extern double time_paused;
 double totalSteps, currentStep, azimutSteps, elevSteps, progress;
+#define MAX_AZ_STEPS 360
+#ifndef REAL
+/* Simulated antenna: Gaussian lobe on boresight (az 0, el 0), peak in dB, beamwidths are 1-sigma in degrees */
+#define SIM_PEAK_DB 10.0
+#define SIM_SIGMA_AZ 25.0
+#define SIM_SIGMA_EL 20.0
+#endif
 double startTime, currentTime, timeOneStep, totalTime, timeLeft, elapsedTime;
 
 static void scan_error(const char *msg)
@@ -85,6 +94,13 @@ void measurement_loop()
     elevSteps = (abs(start_elev - stop_elev) / resolution_elev) + 1;
     totalSteps = azimutSteps * elevSteps;
     startTime = (double)time(NULL);
+    /* One elevation row of values per frequency, written in ascending azimuth order */
+    double (*row)[MAX_AZ_STEPS] = calloc(freq_counter, sizeof *row);
+    if (row == NULL)
+    {
+        scan_error("Out of memory");
+        return;
+    }
     for(m = start_elev; m <= stop_elev; m += resolution_elev)
     {
             if (set_tilt_position(m) != 0)
@@ -92,13 +108,13 @@ void measurement_loop()
                 scan_error("Pan-tilt head not responding");
                 break;
             }
-            for(int c = 0; c < freq_counter; c++)
-            {
-                fprintf(freq[c].file_stream, "%d;", m);
-            }
+            bool reversed = serpentine && ((m - start_elev) / resolution_elev) % 2 == 1;
+            int measured = 0;
             for(n = 0; n <= azimut_sector; n += resolution_azimut)
             {
-                if (set_pan_position(start_azimut + n) != 0)
+                /* Azimuth offset in the sector; odd rows run backwards when serpentine */
+                int a = reversed ? azimut_sector - azimut_sector % resolution_azimut - n : n;
+                if (set_pan_position(start_azimut + a) != 0)
                 {
                     scan_error("Pan-tilt head not responding");
                     break;
@@ -112,8 +128,11 @@ void measurement_loop()
                 progress = 100 * (currentStep / totalSteps);
                 for(int d = 0; d < freq_counter; d++)
                 {
-                    double val = 3;
-                    #ifdef REAL
+                    double val;
+                    #ifndef REAL
+                    double da = (a - azimut_sector / 2.0) / SIM_SIGMA_AZ, de = m / SIM_SIGMA_EL;
+                    val = SIM_PEAK_DB * exp(-0.5 * (da * da + de * de)) + freq[d].reference_gain;
+                    #else
                     if (get_data(freq[d].frequency, &val) != 0)
                     {
                         scan_error("Receiver not responding");
@@ -122,7 +141,7 @@ void measurement_loop()
                     val += freq[d].reference_gain;
                     #endif
 
-                    fprintf(freq[d].file_stream, "%.01lf;", val);
+                    row[d][a / resolution_azimut] = val;
 
                     uv_mutex_lock(&lock_pause_measurement);
                     while (measurement_thread_pause != false)
@@ -130,7 +149,7 @@ void measurement_loop()
                         uv_cond_wait(&cond_resume_measurement, &lock_pause_measurement);
                     }
                     uv_mutex_unlock(&lock_pause_measurement);
-                    app_measurement_point((start_azimut + n) % 360, m, freq[d].frequency, val);
+                    app_measurement_point((start_azimut + a) % 360, m, freq[d].frequency, val);
                     uv_sleep(500);
                     if (measurement_thread_exit)
                     {
@@ -144,14 +163,25 @@ void measurement_loop()
                 totalTime = timeOneStep * totalSteps;
                 timeLeft = totalTime - elapsedTime;
                 app_progress(progress, totalTime, timeLeft);
+                measured++;
                 if (measurement_thread_exit)
                 {
                     /* Measurement has been canceled */
                     break;
                 }
             }
+            /* A cancelled reversed row has gaps and cannot be written column-aligned */
+            int cols = azimut_sector / resolution_azimut + 1;
             for(int e = 0; e < freq_counter; e++)
             {
+                if (!reversed || measured == cols)
+                {
+                    fprintf(freq[e].file_stream, "%d;", m);
+                    for(int i = 0; i < measured; i++)
+                    {
+                        fprintf(freq[e].file_stream, "%.01lf;", row[e][i]);
+                    }
+                }
                 fputs("\n", freq[e].file_stream);
                 fflush(freq[e].file_stream);
             }
@@ -161,6 +191,7 @@ void measurement_loop()
                 break;
             }
     }
+    free(row);
     scan_status = STOPPED;
     if(measurement_thread_exit == false) {
         app_message("Scan process finished.", MSG_SUCCESS);

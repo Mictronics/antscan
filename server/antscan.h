@@ -21,7 +21,8 @@ typedef enum jarray_index_e
     STOP_FREQUENCY,
     TEST_FREQUENCY,
     REFERENCE_GAIN,
-    FREQ_COUNTER
+    FREQ_COUNTER,
+    SERPENTINE
 } jarray_index_e;
 
 typedef enum scan_status_e

@@ -116,6 +116,46 @@ function surface3d(data) {
     return [{ type: 'surface', x, y, z, surfacecolor: r, colorscale: 'Viridis', showscale: false }];
 }
 
+/**
+ * Peak gain, half-power beamwidth and front-to-back ratio of one azimut cut.
+ * Angles are taken relative to the peak, so the 0/360 wrap and point order do not matter.
+ */
+function analyze(radius, theta) {
+    if (!radius.length) {
+        return null;
+    }
+    const peak = radius.indexOf(Math.max(...radius));
+    const pts = radius.map((r, i) => ({ r, d: ((theta[i] - theta[peak] + 540) % 360) - 180 })).sort((a, b) => a.d - b.d);
+    const at = pts.findIndex((p) => p.d === 0);
+    const level = radius[peak] - 3;
+    /* Walk outwards from the peak to the first point below -3 dB and interpolate the crossing */
+    const crossing = (step) => {
+        for (let i = at + step; i >= 0 && i < pts.length; i += step) {
+            if (pts[i].r < level) {
+                const a = pts[i - step];
+                return a.d + (pts[i].d - a.d) * (a.r - level) / (a.r - pts[i].r);
+            }
+        }
+        return null;
+    };
+    const lo = crossing(-1);
+    const hi = crossing(1);
+    const back = pts.reduce((b, p) => (Math.abs(p.d) > Math.abs(b.d) ? p : b));
+    return {
+        peak: radius[peak],
+        peakAz: theta[peak],
+        hpbw: lo === null || hi === null ? null : hi - lo,
+        fb: Math.abs(back.d) >= 170 ? radius[peak] - back.r : null
+    };
+}
+
+function showStats(radius, theta) {
+    const s = analyze(radius, theta);
+    const fmt = (v, unit) => (v === null ? 'n/a' : `${v.toFixed(1)}${unit}`);
+    document.getElementById('stats').textContent = s ?
+        `Peak ${s.peak.toFixed(1)} dB at ${s.peakAz}° | HPBW ${fmt(s.hpbw, '°')} | Front-to-back ${fmt(s.fb, ' dB')}` : '';
+}
+
 function draw_plot() {
     const frequency = freqList[liveDataStatus];
     const data = m_data[frequency];
@@ -127,6 +167,7 @@ function draw_plot() {
     }
     const [r1, theta1] = slice(data, 'elevation', liveDataStatusEl, 'azimut');
     const [r2, theta2] = slice(data, 'azimut', liveDataStatusAz, 'elevation');
+    showStats(r1, theta1);
     Plotly.react('dataField', polarTrace(r1, theta1, 'Azimut'),
         polarLayout(`Measurement data ${frequency}MHz, ${liveDataStatusEl}° elevation`));
     Plotly.react('dataField2', polarTrace(r2, theta2, 'Elevation'),

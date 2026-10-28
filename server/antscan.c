@@ -71,6 +71,7 @@ int start_f, stop_f, freq_counter = 0;
 char file_name[25];
 uint16_t start_azimut, stop_azimut, n;
 int16_t start_elev, stop_elev, resolution_elev, m, azimut_sector, resolution_azimut;
+bool serpentine = false;
 Frequency* freq;
 
 /* Outgoing messages: ring of the last MSG_QUEUE_LEN messages, each client keeps its own read position */
@@ -279,7 +280,7 @@ static bool get_number(json_object *jarr, int idx, double lo, double hi, double 
  */
 static const char *parse_calibration(json_object *jarr)
 {
-    int fc, sector, az_res, el_start, el_stop, el_res, f_start, f_stop, f;
+    int fc, sector, az_res, el_start, el_stop, el_res, f_start, f_stop, f, serp = 0;
     double g;
     json_object *jname = json_object_array_get_idx(jarr, FILENAME);
     json_object *jfreq = json_object_array_get_idx(jarr, TEST_FREQUENCY);
@@ -298,6 +299,11 @@ static const char *parse_calibration(json_object *jarr)
         !json_object_is_type(jgain, json_type_array) ||
         json_object_array_length(jfreq) != (size_t)fc ||
         json_object_array_length(jgain) != (size_t)fc)
+    {
+        return "Wrong input";
+    }
+    /* Optional trailing element, old clients omit it */
+    if (json_object_array_get_idx(jarr, SERPENTINE) != NULL && !get_int(jarr, SERPENTINE, 0, 1, &serp))
     {
         return "Wrong input";
     }
@@ -339,6 +345,7 @@ static const char *parse_calibration(json_object *jarr)
     stop_azimut = sector / 2.0;
     azimut_sector = sector == 360 ? 359 : sector;
     resolution_azimut = az_res;
+    serpentine = serp;
     start_elev = el_start;
     stop_elev = el_stop;
     resolution_elev = el_res;
