@@ -29,6 +29,7 @@ void clean();
 int create_socket();
 
 int connect_server(const char *ip, int port);
+int head_reconnect(void);
 
 int query_pan_position(uint16_t *degrees);
 

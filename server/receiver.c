@@ -109,6 +109,27 @@ int init_receiver(int start_freq, int stop_freq)
     return 0;
 }
 
+/* Reconnect the VISA session only: no *RST, so the instrument keeps its calibration */
+int reopen_receiver(void)
+{
+    #ifdef REAL
+    close_session();
+    if (viOpenDefaultRM(&rmHandle) < VI_SUCCESS)
+    {
+        return -1;
+    }
+    if (viOpen(rmHandle, receiver_resource, VI_NULL, VI_NULL, &scopeHandle) < VI_SUCCESS)
+    {
+        viClose(rmHandle);
+        return -1;
+    }
+    sessionOpen = true;
+    return viClear(scopeHandle) < VI_SUCCESS ? -1 : 0;
+    #else
+    return 0;
+    #endif
+}
+
 int measure()
 {
     #ifdef REAL

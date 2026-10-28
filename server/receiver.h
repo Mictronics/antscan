@@ -13,6 +13,7 @@
 extern char receiver_resource[64];
 
 int init_receiver(int start_freq, int stop_freq);
+int reopen_receiver(void);
 
 int measure();
 

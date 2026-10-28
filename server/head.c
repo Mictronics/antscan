@@ -79,6 +79,21 @@ int connect_server(const char *ip, int port)
     return 0;
 }
 
+/* Open a fresh connection to the address connect_server() used; the old socket may be dead */
+int head_reconnect(void)
+{
+    #ifdef REAL
+    close_socket();
+    if (create_socket() < 0)
+    {
+        return -1;
+    }
+    return connect(socket_desc, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0 ? -1 : 0;
+    #else
+    return 0;
+    #endif
+}
+
 /* Query position in degrees, retry on invalid or short response. Returns 0 on success. */
 static int query_position(int msg, uint8_t reply_cmd, uint16_t *degrees)
 {

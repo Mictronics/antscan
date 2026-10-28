@@ -34,6 +34,88 @@ double totalSteps, currentStep, azimutSteps, elevSteps, progress;
 #endif
 double startTime, currentTime, timeOneStep, totalTime, timeLeft, elapsedTime;
 
+#define RETRIES 3
+#define RETRY_DELAY_MS 2000
+
+typedef enum
+{
+    OP_TILT,
+    OP_PAN,
+    OP_MEASURE,
+    OP_DATA
+} step_op_e;
+
+static int run_op(step_op_e op, int arg, double *val)
+{
+    switch (op)
+    {
+    case OP_TILT:
+        return set_tilt_position(arg);
+    case OP_PAN:
+        return set_pan_position(arg);
+    case OP_MEASURE:
+        return measure();
+    default:
+        return get_data(arg, val);
+    }
+}
+
+/**
+ * Run one head/receiver call, repeating it after a reconnect when it fails. All calls are safe to
+ * repeat (absolute positions, no instrument reset). Returns -1 when the retries are used up.
+ */
+static int try_op(step_op_e op, int arg, double *val)
+{
+    const bool head = op == OP_TILT || op == OP_PAN;
+    for (int attempt = 0;; attempt++)
+    {
+        if (run_op(op, arg, val) == 0)
+        {
+            return 0;
+        }
+        if (attempt == RETRIES || measurement_thread_exit)
+        {
+            return -1;
+        }
+        char msg[48];
+        snprintf(msg, sizeof msg, "%s not responding, retry %d/%d", head ? "Pan-tilt head" : "Receiver", attempt + 1, RETRIES);
+        app_message(msg, MSG_WARNING);
+        uv_sleep(RETRY_DELAY_MS);
+        if ((head ? head_reconnect() : reopen_receiver()) != 0)
+        {
+            lwsl_notice("Reconnect failed\n");
+        }
+    }
+}
+
+/**
+ * Like try_op, but when the retries are used up the scan pauses and waits for the operator to
+ * resume, then tries again. Returns -1 only when the scan was stopped.
+ */
+static int do_op(step_op_e op, int arg, double *val)
+{
+    while (try_op(op, arg, val) != 0)
+    {
+        if (measurement_thread_exit)
+        {
+            return -1;
+        }
+        scan_pause();
+        app_message("Hardware not responding. Scan paused, fix it and resume to retry", MSG_DANGER);
+        uv_mutex_lock(&lock_pause_measurement);
+        while (measurement_thread_pause != false)
+        {
+            uv_cond_wait(&cond_resume_measurement, &lock_pause_measurement);
+        }
+        uv_mutex_unlock(&lock_pause_measurement);
+        if (measurement_thread_exit)
+        {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static void scan_error(const char *msg)
 {
     app_message(msg, MSG_DANGER);
@@ -103,9 +185,8 @@ void measurement_loop()
     }
     for(m = start_elev; m <= stop_elev; m += resolution_elev)
     {
-            if (set_tilt_position(m) != 0)
+            if (do_op(OP_TILT, m, NULL) != 0)
             {
-                scan_error("Pan-tilt head not responding");
                 break;
             }
             bool reversed = serpentine && ((m - start_elev) / resolution_elev) % 2 == 1;
@@ -114,14 +195,8 @@ void measurement_loop()
             {
                 /* Azimuth offset in the sector; odd rows run backwards when serpentine */
                 int a = reversed ? azimut_sector - azimut_sector % resolution_azimut - n : n;
-                if (set_pan_position(start_azimut + a) != 0)
+                if (do_op(OP_PAN, start_azimut + a, NULL) != 0 || do_op(OP_MEASURE, 0, NULL) != 0)
                 {
-                    scan_error("Pan-tilt head not responding");
-                    break;
-                }
-                if (measure() != 0)
-                {
-                    scan_error("Receiver not responding");
                     break;
                 }
                 currentStep += 1;
@@ -133,9 +208,8 @@ void measurement_loop()
                     double da = (a - azimut_sector / 2.0) / SIM_SIGMA_AZ, de = m / SIM_SIGMA_EL;
                     val = SIM_PEAK_DB * exp(-0.5 * (da * da + de * de)) + freq[d].reference_gain;
                     #else
-                    if (get_data(freq[d].frequency, &val) != 0)
+                    if (do_op(OP_DATA, freq[d].frequency, &val) != 0)
                     {
-                        scan_error("Receiver not responding");
                         break;
                     }
                     val += freq[d].reference_gain;

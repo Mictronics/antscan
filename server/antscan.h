@@ -71,6 +71,7 @@ typedef struct Frequencies
 void free_freq(void);
 void app_message(const char *msg, app_msg_type_e type);
 void app_status();
+void scan_pause(void);
 void app_version();
 void app_done(const char *what);
 void app_measurement_point(int az, int el, int freq, double val);

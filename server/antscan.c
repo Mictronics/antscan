@@ -8,6 +8,7 @@
 #include <uv.h>
 #include <string.h>
 #include <getopt.h>
+#include <math.h>
 #include <syslog.h>
 #include <sys/ioctl.h>
 #include <stdlib.h>
@@ -149,6 +150,20 @@ static bool measurement_thread_started = false;
 static bool in_scan(void)
 {
     return scan_status == RUNNING || scan_status == PAUSED;
+}
+
+/**
+ * Pause the running scan. Used by the Pause command and by the measurement loop when a
+ * head/receiver call keeps failing. Resuming is the Pause command again.
+ */
+void scan_pause(void)
+{
+    uv_mutex_lock(&lock_pause_measurement);
+    measurement_thread_pause = true;
+    uv_mutex_unlock(&lock_pause_measurement);
+    pause_start = (double)time(NULL);
+    scan_status = PAUSED;
+    app_status();
 }
 
 /* Slow head/receiver operations run in their own thread, one at a time */
@@ -456,13 +471,8 @@ static void handle_client_request(void *in, size_t len)
     case SERVER_CMD_SCAN_PAUSE:
         if (scan_status == RUNNING)
         {
-            uv_mutex_lock(&lock_pause_measurement);
-            measurement_thread_pause = true;
-            uv_mutex_unlock(&lock_pause_measurement);
-            pause_start = (double)time(NULL);
+            scan_pause();
             app_message("Measurement paused", MSG_WARNING);
-            scan_status = PAUSED;
-            app_status();
         }
         else if (scan_status == PAUSED)
         {
@@ -576,10 +586,19 @@ static int replay_step(struct lws *wsi, struct per_session_data *pss)
             for (int i = 0; i < REPLAY_CHUNK && pss->replay_pos < end; i++, pss->replay_pos++)
             {
                 const struct point_rec *pt = &points[pss->replay_pos];
-                len += snprintf(out + len, MSG_MAX_LEN - len, "%s[%d,%d,%d,%.1f]", i ? "," : "",
-                                pt->az, pt->el, pt->freq, pt->gain);
+                char item[48];
+                int n = snprintf(item, sizeof item, "%s[%d,%d,%d,%.1f]", i ? "," : "",
+                                 pt->az, pt->el, pt->freq, pt->gain);
+                /* Keep room for the closing "]}"; the rest of the chunk goes into the next message */
+                if (n < 0 || len + n + 2 >= MSG_MAX_LEN)
+                {
+                    break;
+                }
+                memcpy(out + len, item, n);
+                len += n;
             }
-            len += snprintf(out + len, MSG_MAX_LEN - len, "]}");
+            memcpy(out + len, "]}", 2);
+            len += 2;
         }
         else
         {
@@ -809,6 +828,8 @@ void app_done(const char *what)
  */
 void app_measurement_point(int az, int el, int freq, double val)
 {
+    /* Invalid readings (R&S returns 9.91E37) must not blow up the message size or break the JSON */
+    val = isfinite(val) ? fmax(-1000.0, fmin(1000.0, val)) : 0.0;
     json_object *jarr = json_object_new_array();
     json_object_array_add(jarr, json_object_new_int(az));
     json_object_array_add(jarr, json_object_new_int(el));
