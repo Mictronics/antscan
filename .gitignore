@@ -1,3 +1,4 @@
 server/*.o
 server/antscan
 server/data/*.csv
+node_modules

@@ -1,14 +1,25 @@
 #include "receiver.h"
+#include <stdarg.h>
+#include <unistd.h>
 
 #include "real.h"
 
 #ifdef REAL
-static char idnQuery[] = "*IDN?\n";
+static char idnQuery[128];
 static ViStatus status = VI_SUCCESS;
 static ViUInt32 returnCount = 0;
 static ViSession rmHandle, scopeHandle;
 static char idnResponse[1024];
 static char ressourceString1[] = "TCPIP::192.168.1.128";
+
+static void scpi(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(idnQuery, sizeof(idnQuery), fmt, ap);
+    va_end(ap);
+    status = viWrite(scopeHandle, (ViBuf)idnQuery, (ViUInt32)strlen(idnQuery), VI_NULL);
+}
 #endif
 
 void init_receiver(int start_freq, int stop_freq)
@@ -20,62 +31,49 @@ void init_receiver(int start_freq, int stop_freq)
     status = viClear(scopeHandle);
 
     //Reset
-    sprintf(idnQuery, "*RST");
-    status = viWrite(scopeHandle, (ViBuf)idnQuery, (ViUInt32)strlen(idnQuery), VI_NULL);
+    scpi("*RST");
 
     //Spectrum Measurement
-    sprintf(idnQuery, "INST:SEL SAN");
-    status = viWrite(scopeHandle, (ViBuf)idnQuery, (ViUInt32)strlen(idnQuery), VI_NULL);
+    scpi("INST:SEL SAN");
 
     //Unit: dBm
-    sprintf(idnQuery, "CALC:UNIT:POW DBM");
-    status = viWrite(scopeHandle, (ViBuf)idnQuery, (ViUInt32)strlen(idnQuery), VI_NULL);
+    scpi("CALC:UNIT:POW DBM");
 
     //Start frequency
-    sprintf(idnQuery, "SENS:FREQ:STAR %i MHz", start_freq);
-    status = viWrite(scopeHandle, (ViBuf)idnQuery, (ViUInt32)strlen(idnQuery), VI_NULL);
+    scpi("SENS:FREQ:STAR %i MHz", start_freq);
 
     //Stop frequency
-    sprintf(idnQuery, "SENS:FREQ:STOP %i MHz", stop_freq);
-    status = viWrite(scopeHandle, (ViBuf)idnQuery, (ViUInt32)strlen(idnQuery), VI_NULL);
+    scpi("SENS:FREQ:STOP %i MHz", stop_freq);
 
     //Tracking generator 1 on
-    sprintf(idnQuery, "OUTP1 ON");
-    status = viWrite(scopeHandle, (ViBuf)idnQuery, (ViUInt32)strlen(idnQuery), VI_NULL);
+    scpi("OUTP1 ON");
 
     //Power mode fixed (no power sweep)
-    sprintf(idnQuery, "SOUR:POW:MODE FIX");
-    status = viWrite(scopeHandle, (ViBuf)idnQuery, (ViUInt32)strlen(idnQuery), VI_NULL);
+    scpi("SOUR:POW:MODE FIX");
 
     //Set source power
-    sprintf(idnQuery, "SOUR:POW 0 dBm");
-    status = viWrite(scopeHandle, (ViBuf)idnQuery, (ViUInt32)strlen(idnQuery), VI_NULL);
+    scpi("SOUR:POW 0 dBm");
 
     //Calibrate transmission
-    sprintf(idnQuery, "SENS:CORR:METH TRAN");
-    status = viWrite(scopeHandle, (ViBuf)idnQuery, (ViUInt32)strlen(idnQuery), VI_NULL);
+    scpi("SENS:CORR:METH TRAN");
     sleep(1);
 
     //Normalization ON
-    sprintf(idnQuery, "SENS:CORR:STAT ON");
-    status = viWrite(scopeHandle, (ViBuf)idnQuery, (ViUInt32)strlen(idnQuery), VI_NULL);
+    scpi("SENS:CORR:STAT ON");
 
     //Referenz level
-    sprintf(idnQuery, "DISP:TRAC:Y:RLEV 0dBm");
-    status = viWrite(scopeHandle, (ViBuf)idnQuery, (ViUInt32)strlen(idnQuery), VI_NULL);
+    scpi("DISP:TRAC:Y:RLEV 0dBm");
 
     //Refernece value position
-    sprintf(idnQuery, "DISP:TRAC:Y:RPOS 50PCT");
-    status = viWrite(scopeHandle, (ViBuf)idnQuery, (ViUInt32)strlen(idnQuery), VI_NULL);
+    scpi("DISP:TRAC:Y:RPOS 50PCT");
 
     sleep(1);
 
     //Run single
-    sprintf(idnQuery, "INIT:CONT OFF");
-    status = viWrite(scopeHandle, (ViBuf)idnQuery, (ViUInt32)strlen(idnQuery), VI_NULL);
+    scpi("INIT:CONT OFF");
     #else
-    start_freq += 1;
-    stop_freq += 1;
+    (void)start_freq;
+    (void)stop_freq;
     #endif
 }
 
@@ -83,8 +81,7 @@ void measure()
 {
     #ifdef REAL
     //Initiate measurement
-    sprintf(idnQuery, "INIT;*WAI");
-    status = viWrite(scopeHandle, (ViBuf)idnQuery, (ViUInt32)strlen(idnQuery), VI_NULL);
+    scpi("INIT;*WAI");
     #endif
 }
 
@@ -92,17 +89,15 @@ double get_data(int measure_freq)
 {
     #ifdef REAL
     //Position marker on x-axis
-    sprintf(idnQuery, "CALC:MARK1:X %dMHz", measure_freq);
-    status = viWrite(scopeHandle, (ViBuf)idnQuery, (ViUInt32)strlen(idnQuery), VI_NULL);
+    scpi("CALC:MARK1:X %dMHz", measure_freq);
 
     //Read marker data
-    sprintf(idnQuery, "CALC:MARK1:Y?");
-    status = viWrite(scopeHandle, (ViBuf)idnQuery, (ViUInt32)strlen(idnQuery), VI_NULL);
+    scpi("CALC:MARK1:Y?");
     status = viRead(scopeHandle, (ViBuf)idnResponse, 1024, &returnCount);
     idnResponse[returnCount] = 0;
     return strtod(idnResponse, NULL);
     #else
-    measure_freq += 1;
+    (void)measure_freq;
     return 0;
     #endif
 }

@@ -28,7 +28,7 @@ static struct argp argp = {options, parse_opt, args_doc, doc, NULL, NULL, NULL};
 
 static int debug_level = 0;
 static int syslog_options = LOG_PID | LOG_PERROR;
-static int uid = -1, gid = -1, num_clients = 0;
+static int num_clients = 0;
 static char ws_ip[20] = WS_DEFAULT_IP;
 static struct sockaddr_in ws_in;
 
@@ -51,7 +51,6 @@ int start_f, stop_f, freq_counter = 0;
 char file_name[25];
 uint16_t start_azimut, stop_azimut, n;
 int16_t start_elev, stop_elev, resolution_elev, m, azimut_sector, resolution_azimut;
-double reference_gain = 0;
 Frequency* freq;
 
 /**
@@ -61,7 +60,6 @@ struct per_session_data
 {
     struct per_session_data *pss_list;
     struct lws *wsi;
-    char publishing; // nonzero: peer is publishing to us
 };
 
 /**
@@ -265,10 +263,6 @@ static void handle_client_request(void *in, size_t len)
             home();
             app_message("Home Position", MSG_SUCCESS);
             break;
-        case SERVER_CMD_STATUS: 
-            break;
-        case SERVER_CMD_MEASUREMENT_POINT:
-            break;
         default:
             break;
         }
@@ -283,7 +277,6 @@ static int callback_broadcast(struct lws *wsi, enum lws_callback_reasons reason,
 {
     struct per_session_data *pss = (struct per_session_data *)user;
     struct per_vhost_data *vhd = (struct per_vhost_data *)lws_protocol_vh_priv_get(lws_get_vhost(wsi), lws_get_protocol(wsi));
-    char buf[32];
     int m = 0;
 
     switch (reason)
@@ -311,15 +304,7 @@ static int callback_broadcast(struct lws *wsi, enum lws_callback_reasons reason,
         ++num_clients;
         lwsl_notice("Client connected.\n");
         pss->wsi = wsi;
-        if (lws_hdr_copy(wsi, buf, sizeof(buf), WSI_TOKEN_GET_URI) > 0)
-        {
-            pss->publishing = !strcmp(buf, "/publisher");
-        }
-        if (!pss->publishing)
-        {
-            /* add subscribers to the list of live pss held in the vhd */
-            lws_ll_fwd_insert(pss, pss_list, vhd->pss_list);
-        }
+        lws_ll_fwd_insert(pss, pss_list, vhd->pss_list);
         break;
 
     case LWS_CALLBACK_CLOSED:
@@ -331,8 +316,6 @@ static int callback_broadcast(struct lws *wsi, enum lws_callback_reasons reason,
         break;
 
     case LWS_CALLBACK_SERVER_WRITEABLE:
-        if (pss->publishing)
-            break;
         /* notice we allowed for LWS_PRE in the payload already */
         m = lws_write(wsi, &pwsbuffer[LWS_SEND_BUFFER_PRE_PADDING], wsbuffer_len, LWS_WRITE_TEXT);
         if (m < (int)sizeof wsbuffer_len)
@@ -343,16 +326,7 @@ static int callback_broadcast(struct lws *wsi, enum lws_callback_reasons reason,
         break;
 
     case LWS_CALLBACK_RECEIVE:
-        /*
-         * For test, our policy is ignore publishing when there are
-         * no subscribers connected.
-         */
-        if (!vhd->pss_list)
-        {
-            break;
-        }
-
-        if (len <= 0)
+        if (!vhd->pss_list || len <= 0)
         {
             break;
         }
@@ -366,10 +340,7 @@ static int callback_broadcast(struct lws *wsi, enum lws_callback_reasons reason,
          */
         lws_start_foreach_llp(struct per_session_data **, ppss, vhd->pss_list)
         {
-            if (!(*ppss)->publishing)
-            {
-                lws_callback_on_writable((*ppss)->wsi);
-            }
+            lws_callback_on_writable((*ppss)->wsi);
         }
         lws_end_foreach_llp(ppss, pss_list);
         break;
@@ -401,18 +372,33 @@ static struct lws_protocols protocols[] = {
 };
 
 /**
+ * Serialize json object into the websocket buffer and queue it for all clients.
+ * Takes ownership of jobj.
+ */
+static void ws_send(json_object *jobj)
+{
+    size_t len = 0;
+    const char *p = json_object_to_json_string_length(jobj, JSON_C_TO_STRING_PLAIN, &len);
+    memcpy(&pwsbuffer[LWS_SEND_BUFFER_PRE_PADDING], p, len);
+    wsbuffer_len = len;
+    lws_callback_on_writable_all_protocol(context, &protocols[1]);
+    json_object_put(jobj);
+}
+
+static void ws_send_cmd(const char *cmd, json_object *data)
+{
+    json_object *jobj = json_object_new_object();
+    json_object_object_add(jobj, "cmd", json_object_new_string(cmd));
+    json_object_object_add(jobj, "data", data);
+    ws_send(jobj);
+}
+
+/**
  * Forward status to web application.
  */
 void app_status()
 {
-    size_t len = 0;
-    json_object *jobj = json_object_new_object();
-    json_object_object_add(jobj, "cmd", json_object_new_string("status"));
-    json_object_object_add(jobj, "data", json_object_new_int(scan_status));
-    const char *p = json_object_to_json_string_length(jobj, JSON_C_TO_STRING_PLAIN, &len);
-    memcpy(&pwsbuffer[LWS_SEND_BUFFER_PRE_PADDING], (unsigned char *)p, len);
-    wsbuffer_len = len;
-    lws_callback_on_writable_all_protocol(context, &protocols[1]);
+    ws_send_cmd("status", json_object_new_int(scan_status));
 }
 
 /**
@@ -420,92 +406,36 @@ void app_status()
  */
 void app_measurement_point(int az, int el, int freq, double val)
 {
-    size_t len = 0;
-    json_object *jobj = json_object_new_object();
-    json_object_object_add(jobj, "cmd", json_object_new_string("point"));
     json_object *jarr = json_object_new_array();
-    json_object_array_put_idx(jarr, 0, json_object_new_int(az));
-    json_object_array_put_idx(jarr, 1, json_object_new_int(el));
-    json_object_array_put_idx(jarr, 2, json_object_new_int(freq));
-    json_object_array_put_idx(jarr, 3, json_object_new_double(val));
-    json_object_object_add(jobj, "data", jarr);
-    const char *p = json_object_to_json_string_length(jobj, JSON_C_TO_STRING_PLAIN, &len);
-    memcpy(&pwsbuffer[LWS_SEND_BUFFER_PRE_PADDING], (unsigned char *)p, len);
-    wsbuffer_len = len;
-    lws_callback_on_writable_all_protocol(context, &protocols[1]);
+    json_object_array_add(jarr, json_object_new_int(az));
+    json_object_array_add(jarr, json_object_new_int(el));
+    json_object_array_add(jarr, json_object_new_int(freq));
+    json_object_array_add(jarr, json_object_new_double(val));
+    ws_send_cmd("point", jarr);
     /* Send measurement point immediately to web application */
     lws_service(context, 0);
 }
 
 void app_progress(double progress, double totalTime, double timeLeft)
 {
-    size_t len = 0;
-    json_object *jobj = json_object_new_object();
-    json_object_object_add(jobj, "cmd", json_object_new_string("progress"));
     json_object *jarr = json_object_new_array();
-    json_object_array_put_idx(jarr, 0, json_object_new_int(progress));
-    json_object_array_put_idx(jarr, 1, json_object_new_int(totalTime));
-    json_object_array_put_idx(jarr, 2, json_object_new_int(timeLeft));
-    json_object_object_add(jobj, "data", jarr);
-    const char *p = json_object_to_json_string_length(jobj, JSON_C_TO_STRING_PLAIN, &len);
-    memcpy(&pwsbuffer[LWS_SEND_BUFFER_PRE_PADDING], (unsigned char *)p, len);
-    wsbuffer_len = len;
-    lws_callback_on_writable_all_protocol(context, &protocols[1]);
-    /* Send measurement point immediately to web application */
+    json_object_array_add(jarr, json_object_new_int(progress));
+    json_object_array_add(jarr, json_object_new_int(totalTime));
+    json_object_array_add(jarr, json_object_new_int(timeLeft));
+    ws_send_cmd("progress", jarr);
     lws_service(context, 0);
 }
 
 /**
- * Forward message to web application.
+ * Forward message to web application. Sent as soon as lws_service runs;
+ * callers needing it immediately call lws_service themselves.
  */
 void app_message(const char *msg, app_msg_type_e type)
 {
-    size_t len = 0;
-    /* Creat json root object */
-    json_object *jobj = json_object_new_object();
-    /* Creat json data string with message */
-    json_object *str = json_object_new_string(msg);
-    /* Add json command identifier */
-    switch (type)
-    {
-    case MSG_PRIMARY:
-        json_object_object_add(jobj, "cmd", json_object_new_string("primary"));
-        break;
-    case MSG_SECONDARY:
-        json_object_object_add(jobj, "cmd", json_object_new_string("secondary"));
-        break;
-    case MSG_SUCCESS:
-        json_object_object_add(jobj, "cmd", json_object_new_string("success"));
-        break;
-    case MSG_INFO:
-        json_object_object_add(jobj, "cmd", json_object_new_string("info"));
-        break;
-    case MSG_WARNING:
-        json_object_object_add(jobj, "cmd", json_object_new_string("warning"));
-        break;
-    case MSG_DANGER:
-        json_object_object_add(jobj, "cmd", json_object_new_string("danger"));
-        break;
-    case MSG_LIGHT:
-        json_object_object_add(jobj, "cmd", json_object_new_string("light"));
-        break;
-    case MSG_DARK:
-        json_object_object_add(jobj, "cmd", json_object_new_string("dark"));
-        break;
-    default:
-        break;
-    }
-    /* Add data string to root object */
-    json_object_object_add(jobj, "data", str);
-    /* Make full json string, length required for websocket send */
-    const char *p = json_object_to_json_string_length(jobj, JSON_C_TO_STRING_PLAIN, &len);
-    /* Copy json string to websocket buffer, json string exists only temporary */
-    memcpy(&pwsbuffer[LWS_SEND_BUFFER_PRE_PADDING], (unsigned char *)p, len);
-    wsbuffer_len = len;
-    /* Initiate send via websocket, async! */
-    lws_callback_on_writable_all_protocol(context, &protocols[1]);
-    /* The buffer will be send as soon as lws_service is called in main loop! */
-    /* Immediate send requires a direct call of lws_service in here */
+    /* Indexed by app_msg_type_e */
+    static const char *const cmd[] = {"primary", "secondary", "success", "info",
+                                      "warning", "danger", "light", "dark"};
+    ws_send_cmd(cmd[type], json_object_new_string(msg));
 }
 
 /**
@@ -530,12 +460,6 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
         break;
     case OPT_WS_PORT:
         ws_in.sin_port = atoi(arg);
-        break;
-    case OPT_GROUP:
-        gid = atoi(arg);
-        break;
-    case OPT_USER:
-        uid = atoi(arg);
         break;
     case ARGP_KEY_END:
         if (state->arg_num > 0)
@@ -634,8 +558,6 @@ int main(int argc, char **argv)
     /* Tell the library what debug level to emit and to send it to syslog */
     lws_set_log_level(debug_level, lwsl_emit_syslog);
 
-    info.gid = gid;
-    info.uid = uid;
     info.max_http_header_pool = 16;
     info.timeout_secs = 5;
 

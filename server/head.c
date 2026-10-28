@@ -2,7 +2,7 @@
 
 #include "real.h"
 
-static uint8_t messages[5][7] = {
+static uint8_t messages[6][7] = {
     {0xFF, 0x01, 0x00, 0x51, 0x00, 0x00, 0x52},
     {0xFF, 0x01, 0x00, 0x53, 0x00, 0x00, 0x54},
     {0xFF, 0x01, 0x00, 0x4B, 0x00, 0x00, 0x00},
@@ -12,16 +12,11 @@ static uint8_t messages[5][7] = {
 static uint8_t client_message[7], server_message[100];
 static struct sockaddr_in server_addr;
 static int socket_desc;
-static uint16_t dec_output;
-static int16_t dec_output_signed;
 static struct pollfd fds[1];
 
 static void dummy_cmd()
 {
-    for (int i = 0; i < 7; i++)
-    {
-        client_message[i] = messages[DUMMY][i];
-    }
+    memcpy(client_message, messages[DUMMY], MSG_LENGHT);
     send_message();
     receive_response();
 }
@@ -76,57 +71,31 @@ int connect_server()
     return 0;
 }
 
-uint16_t query_pan_position()
+/* Query position (centi-degrees) with up to 5 retries on invalid/short response */
+static uint16_t query_position(int msg, uint8_t reply_cmd)
 {
-    int ret = 0;
-    for (int i = 0; i < 7; i++)
-    {
-        client_message[i] = messages[QUERY_PAN_POSITION][i];
-    }
-    /* Repeat in case of invalid response or too short response */
+    memcpy(client_message, messages[msg], MSG_LENGHT);
     for (int n = 0; n < 5; n++)
     {
         send_message();
-        ret = receive_response();
-        if (ret >= 14 && server_message[7] == 0xff && server_message[8] == 0x01 && server_message[9] == 0x00 && server_message[10] == 0x59)
+        int ret = receive_response();
+        if (ret >= 14 && server_message[7] == 0xff && server_message[8] == 0x01 && server_message[9] == 0x00 && server_message[10] == reply_cmd)
         {
             break;
         }
     }
-    // PAN-Position
-    dec_output = (server_message[11] << 8) + server_message[12];
-    dec_output = dec_output / 100.0;
-    //printf("PAN-position: %u degree\n", dec_output);
+    return ((server_message[11] << 8) + server_message[12]) / 100;
+}
 
-    return dec_output % 360;
+uint16_t query_pan_position()
+{
+    return query_position(QUERY_PAN_POSITION, 0x59) % 360;
 }
 
 int16_t query_tilt_position()
 {
-    int ret = 0;
-    for (int i = 0; i < 7; i++)
-    {
-        client_message[i] = messages[QUERY_TILT_POSITION][i];
-    }
-    /* Repeat in case of invalid response or too short response */
-    for(int n = 0; n < 5; n++) {
-        send_message();
-        ret = receive_response();
-        if (ret >= 14 && server_message[7] == 0xff && server_message[8] == 0x01 && server_message[9] == 0x00 && server_message[10] == 0x5b) {
-            break;
-        }
-    }
-    // TILT-Position
-    dec_output = (server_message[11] << 8) + server_message[12];
-    dec_output = dec_output / 100.0;
-    if (dec_output > 180)
-    {
-        dec_output = dec_output - 360;
-    }
-    dec_output_signed = (int16_t)dec_output;
-    //printf("TILT-position: %d degree\n", dec_output_signed);
-
-    return dec_output_signed;
+    int16_t pos = query_position(QUERY_TILT_POSITION, 0x5b);
+    return pos > 180 ? pos - 360 : pos;
 }
 
 void set_pan_position(uint16_t dec_input)
@@ -137,10 +106,7 @@ void set_pan_position(uint16_t dec_input)
     messages[SET_PAN_POSITION][4] = (buffer >> 8) & 0xFF;
     messages[SET_PAN_POSITION][5] = buffer & 0xFF;
     messages[SET_PAN_POSITION][6] = checksum(SET_PAN_POSITION);
-    for (int i = 0; i < 7; i++)
-    {
-        client_message[i] = messages[SET_PAN_POSITION][i];
-    }
+    memcpy(client_message, messages[SET_PAN_POSITION], MSG_LENGHT);
     send_message();
     receive_response();
     #ifdef REAL
@@ -172,10 +138,7 @@ void set_tilt_position(int16_t dec_input_signed)
     messages[SET_TILT_POSITION][4] = (buffer >> 8) & 0xFF;
     messages[SET_TILT_POSITION][5] = buffer & 0xFF;
     messages[SET_TILT_POSITION][6] = checksum(SET_TILT_POSITION);
-    for (int i = 0; i < 7; i++)
-    {
-        client_message[i] = messages[SET_TILT_POSITION][i];
-    }
+    memcpy(client_message, messages[SET_TILT_POSITION], MSG_LENGHT);
     send_message();
     receive_response();
     #ifdef REAL
@@ -209,11 +172,7 @@ void self_check()
 void home()
 {
     set_pan_position(0);
-    send_message();
-    receive_response();
     set_tilt_position(0);
-    send_message();
-    receive_response();
 }
 
 int send_message()

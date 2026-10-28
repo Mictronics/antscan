@@ -11,11 +11,9 @@
 #include "real.h"
 
 extern int start_f, stop_f, freq_counter;
-extern int measure_f[5];
 extern char file_name[25];
 extern uint16_t start_azimut, stop_azimut, n;
 extern int16_t start_elev, stop_elev, resolution_elev, m, azimut_sector, resolution_azimut;
-extern double reference_gain;
 extern Frequency* freq;
 time_t now;
 struct tm* t;
