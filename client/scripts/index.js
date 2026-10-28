@@ -234,7 +234,7 @@ function showToast(message, type) {
       toast.classList.add('text-bg-success');
       toastButton.classList.add('btn-close-white');
       break;
-    case ToastType.info:
+    case ToastType.Info:
       toast.classList.add('text-bg-info');
       break;
     case ToastType.Warning:
@@ -358,8 +358,8 @@ function createDataFrame() {
   document.getElementById('inputElevResolution').classList.add('is-valid');
   if((Math.abs(elStartAngle - elStopAngle)) % elResolution != 0) {
     document.getElementById('inputElevStartAngle').classList.remove('is-valid', 'is-invalid');
-    document.getElementById('inputElevStopAngle').classList.remove('is-valid', 'is-invlaid');
-    document.getElementById('inputElevResolution').classList.remove('is-valid', 'is-invlaid');
+    document.getElementById('inputElevStopAngle').classList.remove('is-valid', 'is-invalid');
+    document.getElementById('inputElevResolution').classList.remove('is-valid', 'is-invalid');
     document.getElementById('inputElevStartAngle').classList.add('is-invalid');
     document.getElementById('inputElevStopAngle').classList.add('is-invalid');
     document.getElementById('inputElevResolution').classList.add('is-invalid');
@@ -513,7 +513,7 @@ function init_dropdown(frequency, len, elStart, elStop, elRes, azSector, azRes) 
     button.innerText = `${frequency[i]}MHz`;
     li.appendChild(button);
     completeList.appendChild(li);
-    document.getElementById(`${frequency[i]}`).addEventListener('click', () => {
+    button.addEventListener('click', () => {
       liveDataStatus = i;
       draw_plot();
     });
@@ -529,11 +529,11 @@ function init_dropdown(frequency, len, elStart, elStop, elRes, azSector, azRes) 
     button.classList.add('dropdown-item');
     button.setAttribute("type", "button");
     button.setAttribute("value", `${frequency[i]}`);
-    button.setAttribute("id", `${frequency[i]}`);
+    button.setAttribute("id", `${frequency[i]}-3d`);
     button.innerText = `${frequency[i]}MHz`;
     li.appendChild(button);
     completeList.appendChild(li);
-    document.getElementById(`${frequency[i]}`).addEventListener('click', () => {
+    button.addEventListener('click', () => {
       liveDataStatus = i;
       draw_plot();
     });
@@ -553,7 +553,7 @@ function init_dropdown(frequency, len, elStart, elStop, elRes, azSector, azRes) 
     button.innerText = `${i}°`;
     li.appendChild(button);
     completeList.appendChild(li);
-    document.getElementById(`${i}el`).addEventListener('click', () => {
+    button.addEventListener('click', () => {
       liveDataStatusEl = i;
       draw_plot();
     })
@@ -579,7 +579,7 @@ function init_dropdown(frequency, len, elStart, elStop, elRes, azSector, azRes) 
     button.innerText = `${(i%360)}°`;
     li.appendChild(button);
     completeList.appendChild(li);
-    document.getElementById(`${(i%360)}az`).addEventListener('click', () => {
+    button.addEventListener('click', () => {
       liveDataStatusAz = i % 360;
       draw_plot();
     })

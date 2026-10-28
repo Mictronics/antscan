@@ -21,9 +21,9 @@
 #include "real.h"
 
 static error_t parse_opt(int key, char *arg, struct argp_state *state);
-const char *argp_program_version = "C Websocket Server Example";
-const char args_doc[] = "args doc";
-const char doc[] = "some more doc";
+const char *argp_program_version = "antscan 1.0";
+const char args_doc[] = "";
+const char doc[] = "Antenna gain pattern measurement server.";
 static struct argp argp = {options, parse_opt, args_doc, doc, NULL, NULL, NULL};
 
 static int debug_level = 0;
@@ -318,7 +318,7 @@ static int callback_broadcast(struct lws *wsi, enum lws_callback_reasons reason,
     case LWS_CALLBACK_SERVER_WRITEABLE:
         /* notice we allowed for LWS_PRE in the payload already */
         m = lws_write(wsi, &pwsbuffer[LWS_SEND_BUFFER_PRE_PADDING], wsbuffer_len, LWS_WRITE_TEXT);
-        if (m < (int)sizeof wsbuffer_len)
+        if (m < wsbuffer_len)
         {
             lwsl_err("ERROR %d writing to ws socket\n", m);
             return -1;

@@ -30,7 +30,7 @@ Three tiers, wired as in `design/komponentendiagramm.plantuml` and `design/seque
 
 ## Simulation vs. real hardware
 
-Hardware calls are guarded by `#ifdef REAL`. `server/real.h` holds `//#define REAL` (commented out = simulation: no head/receiver access, `loop.c` emits a constant value). Uncomment it to build against real hardware; every file that needs it includes `real.h`. Because the Makefile rule depends on `server/*.h`, changing it rebuilds all objects.
+Hardware calls are guarded by `#ifdef REAL`. `server/real.h` holds `//#define REAL` (commented out = simulation: no head/receiver access, `loop.c` emits a constant value). Uncomment it to build against real hardware; every file that needs it includes `real.h`.
 
 ## Gotchas
 

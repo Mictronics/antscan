@@ -8,7 +8,7 @@ LDFLAGS =
 
 all: antscan
 
-%.o: server/%.c server/*.h
+server/%.o: server/%.c $(wildcard server/*.h)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 antscan: server/antscan.o server/head.o server/receiver.o server/loop.o

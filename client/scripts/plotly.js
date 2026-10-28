@@ -1,9 +1,14 @@
 let m_data = {};
 let r_data = {};
+/* Measurement frequencies in input order, index = dropdown selection */
+let freqList = [];
 
 function init_plot(testFrequency, len) {
     m_data = {};
+    r_data = {};
+    freqList = [];
     for (let i = 0; i < len; i++) {
+        freqList.push(`${testFrequency[i]}`);
         m_data[`${testFrequency[i]}`] = {
             azimut: [],
             elevation: [],
@@ -87,6 +92,9 @@ function deg2rad(degree) {
 }
 
 function append(azimut, elevation, frequency, gain) {
+    if (!m_data[`${frequency}`]) {
+        return;
+    }
     gain = parseFloat(gain.toFixed(1));
     console.info(`rounded gain: ${gain}`);
 
@@ -122,7 +130,7 @@ function append(azimut, elevation, frequency, gain) {
 }
 
 function draw_plot() {
-    var frequency = Object.keys(m_data)[liveDataStatus];
+    var frequency = freqList[liveDataStatus];
     var predata = [
         {
             r: [],
@@ -203,7 +211,7 @@ function draw_plot() {
 }
 
 function built_data1() {
-    var frequency = Object.keys(m_data)[liveDataStatus];
+    var frequency = freqList[liveDataStatus];
     var radius = [];
     var theta2 = [];
 
@@ -233,7 +241,7 @@ function built_data1() {
 }
 
 function built_data2() {
-    var frequency = Object.keys(m_data)[liveDataStatus];
+    var frequency = freqList[liveDataStatus];
     var radius = [];
     var theta2 = [];
 
@@ -263,7 +271,7 @@ function built_data2() {
 }
 
 function built_layout1() {
-    var frequency = Object.keys(m_data)[liveDataStatus];
+    var frequency = freqList[liveDataStatus];
     var layout = {
         autosize: false,
         width: 500,
@@ -287,7 +295,7 @@ function built_layout1() {
 }
 
 function built_layout2() {
-    var frequency = Object.keys(m_data)[liveDataStatus];
+    var frequency = freqList[liveDataStatus];
     var layout = {
         autosize: false,
         width: 500,
@@ -312,7 +320,7 @@ function built_layout2() {
 }
 
 function built_data3d() {
-    var frequency = Object.keys(r_data)[liveDataStatus];
+    var frequency = freqList[liveDataStatus];
     var data = [
         {
             alphahull: 0,
