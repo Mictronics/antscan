@@ -5,99 +5,139 @@
 #include "real.h"
 
 #ifdef REAL
-static char idnQuery[128];
-static ViStatus status = VI_SUCCESS;
-static ViUInt32 returnCount = 0;
+static char scpiCommand[128];
 static ViSession rmHandle, scopeHandle;
-static char idnResponse[1024];
+static bool sessionOpen = false;
+static char scpiResponse[1024];
 static char ressourceString1[] = "TCPIP::192.168.1.128";
 
-static void scpi(const char *fmt, ...)
+/* Send one SCPI command, returns 0 on success */
+static int scpi(const char *fmt, ...)
 {
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(idnQuery, sizeof(idnQuery), fmt, ap);
+    vsnprintf(scpiCommand, sizeof(scpiCommand), fmt, ap);
     va_end(ap);
-    status = viWrite(scopeHandle, (ViBuf)idnQuery, (ViUInt32)strlen(idnQuery), VI_NULL);
+    return viWrite(scopeHandle, (ViBuf)scpiCommand, (ViUInt32)strlen(scpiCommand), VI_NULL) < VI_SUCCESS ? -1 : 0;
 }
+
+static void close_session()
+{
+    if (sessionOpen)
+    {
+        viClose(scopeHandle);
+        viClose(rmHandle);
+        sessionOpen = false;
+    }
+}
+
+#define CHECK(call)     \
+    do                  \
+    {                   \
+        if ((call) != 0) \
+        {               \
+            return -1;  \
+        }               \
+    } while (0)
 #endif
 
-void init_receiver(int start_freq, int stop_freq)
+int init_receiver(int start_freq, int stop_freq)
 {
     #ifdef REAL
-    status = viOpenDefaultRM (&rmHandle);
-
-    status = viOpen(rmHandle, ressourceString1, VI_NULL, VI_NULL, &scopeHandle);
-    status = viClear(scopeHandle);
+    close_session();
+    if (viOpenDefaultRM(&rmHandle) < VI_SUCCESS)
+    {
+        return -1;
+    }
+    if (viOpen(rmHandle, ressourceString1, VI_NULL, VI_NULL, &scopeHandle) < VI_SUCCESS)
+    {
+        viClose(rmHandle);
+        return -1;
+    }
+    sessionOpen = true;
+    if (viClear(scopeHandle) < VI_SUCCESS)
+    {
+        return -1;
+    }
 
     //Reset
-    scpi("*RST");
+    CHECK(scpi("*RST"));
 
     //Spectrum Measurement
-    scpi("INST:SEL SAN");
+    CHECK(scpi("INST:SEL SAN"));
 
     //Unit: dBm
-    scpi("CALC:UNIT:POW DBM");
+    CHECK(scpi("CALC:UNIT:POW DBM"));
 
     //Start frequency
-    scpi("SENS:FREQ:STAR %i MHz", start_freq);
+    CHECK(scpi("SENS:FREQ:STAR %i MHz", start_freq));
 
     //Stop frequency
-    scpi("SENS:FREQ:STOP %i MHz", stop_freq);
+    CHECK(scpi("SENS:FREQ:STOP %i MHz", stop_freq));
 
     //Tracking generator 1 on
-    scpi("OUTP1 ON");
+    CHECK(scpi("OUTP1 ON"));
 
     //Power mode fixed (no power sweep)
-    scpi("SOUR:POW:MODE FIX");
+    CHECK(scpi("SOUR:POW:MODE FIX"));
 
     //Set source power
-    scpi("SOUR:POW 0 dBm");
+    CHECK(scpi("SOUR:POW 0 dBm"));
 
     //Calibrate transmission
-    scpi("SENS:CORR:METH TRAN");
+    CHECK(scpi("SENS:CORR:METH TRAN"));
     sleep(1);
 
     //Normalization ON
-    scpi("SENS:CORR:STAT ON");
+    CHECK(scpi("SENS:CORR:STAT ON"));
 
     //Referenz level
-    scpi("DISP:TRAC:Y:RLEV 0dBm");
+    CHECK(scpi("DISP:TRAC:Y:RLEV 0dBm"));
 
     //Refernece value position
-    scpi("DISP:TRAC:Y:RPOS 50PCT");
+    CHECK(scpi("DISP:TRAC:Y:RPOS 50PCT"));
 
     sleep(1);
 
     //Run single
-    scpi("INIT:CONT OFF");
+    CHECK(scpi("INIT:CONT OFF"));
     #else
     (void)start_freq;
     (void)stop_freq;
     #endif
+    return 0;
 }
 
-void measure()
+int measure()
 {
     #ifdef REAL
     //Initiate measurement
-    scpi("INIT;*WAI");
+    return scpi("INIT;*WAI");
+    #else
+    return 0;
     #endif
 }
 
-double get_data(int measure_freq)
+int get_data(int measure_freq, double *value)
 {
     #ifdef REAL
+    ViUInt32 returnCount = 0;
     //Position marker on x-axis
-    scpi("CALC:MARK1:X %dMHz", measure_freq);
+    CHECK(scpi("CALC:MARK1:X %dMHz", measure_freq));
 
     //Read marker data
-    scpi("CALC:MARK1:Y?");
-    status = viRead(scopeHandle, (ViBuf)idnResponse, 1024, &returnCount);
-    idnResponse[returnCount] = 0;
-    return strtod(idnResponse, NULL);
+    CHECK(scpi("CALC:MARK1:Y?"));
+    if (viRead(scopeHandle, (ViBuf)scpiResponse, sizeof(scpiResponse) - 1, &returnCount) < VI_SUCCESS)
+    {
+        return -1;
+    }
+    scpiResponse[returnCount] = 0;
+    char *end;
+    *value = strtod(scpiResponse, &end);
+    return end == scpiResponse ? -1 : 0;
     #else
     (void)measure_freq;
+    *value = 0;
     return 0;
     #endif
 }

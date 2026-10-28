@@ -7,7 +7,10 @@
 #include "string.h"
 #include "sys/socket.h"
 #include "arpa/inet.h"
-#include <poll.h>
+#include <limits.h>
+#include <stdlib.h>
+#include <time.h>
+#include <sys/time.h>
 #include <netinet/tcp.h>
 
 #define QUERY_PAN_POSITION 0
@@ -27,17 +30,17 @@ int create_socket();
 
 int connect_server();
 
-uint16_t query_pan_position();
+int query_pan_position(uint16_t *degrees);
 
-int16_t query_tilt_position();
+int query_tilt_position(int16_t *degrees);
 
-void set_pan_position(uint16_t dec_input);
+int set_pan_position(int degrees);
 
-void set_tilt_position(int16_t dec_input_signed);
+int set_tilt_position(int degrees);
 
-void self_check();
+int self_check();
 
-void home();
+int home();
 
 int send_message();
 

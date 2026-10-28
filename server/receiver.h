@@ -6,12 +6,13 @@
 #include "string.h"
 #include "time.h"
 #include "rsvisa/visa.h"
+#include <stdbool.h>
 #include <stdlib.h>
 
-void init_receiver(int start_freq, int stop_freq);
+int init_receiver(int start_freq, int stop_freq);
 
-void measure();
+int measure();
 
-double get_data(int measure_freq);
+int get_data(int measure_freq, double *value);
 
 #endif

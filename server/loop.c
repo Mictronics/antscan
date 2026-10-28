@@ -25,6 +25,12 @@ extern double time_paused;
 double totalSteps, currentStep, azimutSteps, elevSteps, progress;
 double startTime, currentTime, timeOneStep, totalTime, timeLeft, elapsedTime;
 
+static void scan_error(const char *msg)
+{
+    app_message(msg, MSG_DANGER);
+    measurement_thread_exit = true;
+}
+
 int file_init()
 {
     time_t now = time(NULL);
@@ -81,24 +87,39 @@ void measurement_loop()
     startTime = (double)time(NULL);
     for(m = start_elev; m <= stop_elev; m += resolution_elev)
     {
-            set_tilt_position(m);
+            if (set_tilt_position(m) != 0)
+            {
+                scan_error("Pan-tilt head not responding");
+                break;
+            }
             for(int c = 0; c < freq_counter; c++)
             {
                 fprintf(freq[c].file_stream, "%d;", m);
             }
             for(n = 0; n <= azimut_sector; n += resolution_azimut)
             {
-                set_pan_position(start_azimut + n);
-                measure();
+                if (set_pan_position(start_azimut + n) != 0)
+                {
+                    scan_error("Pan-tilt head not responding");
+                    break;
+                }
+                if (measure() != 0)
+                {
+                    scan_error("Receiver not responding");
+                    break;
+                }
                 currentStep += 1;
                 progress = 100 * (currentStep / totalSteps);
                 for(int d = 0; d < freq_counter; d++)
                 {
-                    #ifdef REAL
-                    double val = get_data(freq[d].frequency) + freq[d].reference_gain;
-                    #else
-                    //double val = (rand() % 20000) / 20000.0;
                     double val = 3;
+                    #ifdef REAL
+                    if (get_data(freq[d].frequency, &val) != 0)
+                    {
+                        scan_error("Receiver not responding");
+                        break;
+                    }
+                    val += freq[d].reference_gain;
                     #endif
 
                     fprintf(freq[d].file_stream, "%.01lf;", val);

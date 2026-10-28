@@ -118,29 +118,56 @@ static void job_run(void *arg)
     switch (job.cmd)
     {
     case SERVER_CMD_SET_PAN:
-        set_pan_position(job.val);
+        if (set_pan_position(job.val) != 0)
+        {
+            app_message("Pan-tilt head not responding", MSG_DANGER);
+            break;
+        }
         snprintf(buffer, sizeof(buffer), "PAN Position set to %d°", job.val);
         app_message(buffer, MSG_SUCCESS);
         break;
     case SERVER_CMD_SET_TILT:
-        set_tilt_position(job.val);
+        if (set_tilt_position(job.val) != 0)
+        {
+            app_message("Pan-tilt head not responding", MSG_DANGER);
+            break;
+        }
         snprintf(buffer, sizeof(buffer), "TILT Position set to %d°", job.val);
         app_message(buffer, MSG_SUCCESS);
         break;
     case SERVER_CMD_CALIBRATE_PT:
-        self_check();
-        app_message("Self-Check finished", MSG_SUCCESS);
+        if (self_check() == 0)
+        {
+            app_message("Self-Check finished", MSG_SUCCESS);
+        }
+        else
+        {
+            app_message("Self-Check failed", MSG_DANGER);
+        }
         app_done("check");
         break;
     case SERVER_CMD_SET_HOME:
-        home();
-        app_message("Home Position", MSG_SUCCESS);
+        if (home() == 0)
+        {
+            app_message("Home Position", MSG_SUCCESS);
+        }
+        else
+        {
+            app_message("Pan-tilt head not responding", MSG_DANGER);
+        }
         app_done("home");
         break;
     case SERVER_CMD_CALIBRATE_ANTENNA:
-        init_receiver(start_f, stop_f);
-        app_message("Receiver calibrated. Change antenna", MSG_SUCCESS);
-        scan_status = CALIBRATED;
+        if (init_receiver(start_f, stop_f) == 0)
+        {
+            app_message("Receiver calibrated. Change antenna", MSG_SUCCESS);
+            scan_status = CALIBRATED;
+        }
+        else
+        {
+            app_message("Receiver not responding", MSG_DANGER);
+            free_freq();
+        }
         app_status();
         break;
     default:
@@ -665,7 +692,7 @@ int main(int argc, char **argv)
 
     if(create_socket() == -1)
     {
-        return 0;
+        return EXIT_FAILURE;
     }
 
     // Send connection request to server
@@ -673,7 +700,7 @@ int main(int argc, char **argv)
     if (connect_server() == -1)
     {
         close_socket();
-        return 0;
+        return EXIT_FAILURE;
     }
     #endif
 
