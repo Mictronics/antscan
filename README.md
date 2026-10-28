@@ -102,4 +102,4 @@ The first line holds the settings, the second the azimuth angles, then one row p
 
 ## License
 
-GPL-3.0-or-later, see `package.json`. Author: Michael Wolf, <https://www.mictronics.de>.
+GPL-3.0-or-later, see [LICENSE](LICENSE). Author: Michael Wolf, <https://www.mictronics.de>.
