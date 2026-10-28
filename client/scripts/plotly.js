@@ -56,7 +56,7 @@ function polarLayout(title, sector) {
         autosize: false,
         width: 500,
         height: 500,
-        title,
+        title: { text: title },
         font: { family: 'Arial, sans-serif', size: 12, color: '#000' },
         showlegend: false,
         polar
@@ -212,7 +212,7 @@ function draw_plot() {
     if (!data) {
         Plotly.react('dataField', polarTrace([], [], 'Azimut'), polarLayout('Measurement'));
         Plotly.react('dataField2', polarTrace([], [], 'Elevation'), polarLayout('Measurement', [0, 180]));
-        Plotly.react('dataField3', [{ type: 'scatter3d', x: [], y: [], z: [] }], { title: 'Measurement' });
+        Plotly.react('dataField3', [{ type: 'scatter3d', x: [], y: [], z: [] }], { title: { text: 'Measurement' } });
         return;
     }
     const [r1, theta1] = slice(data, 'elevation', liveDataStatusEl, 'azimut');
@@ -223,5 +223,5 @@ function draw_plot() {
     Plotly.react('dataField2', polarTrace(r2, theta2, 'Elevation'),
         polarLayout(`Measurement data ${frequency}MHz, ${liveDataStatusAz}° azimut`, [0, 180]));
     Plotly.react('dataField3', data.gain.length ? surface3d(data) : [{ type: 'scatter3d', x: [], y: [], z: [] }],
-        { title: `Measurement data ${frequency}MHz`, scene: { aspectmode: 'data' } });
+        { title: { text: `Measurement data ${frequency}MHz` }, scene: { aspectmode: 'data' } });
 }

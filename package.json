@@ -1,6 +1,6 @@
 {
   "name": "antscan",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Antenna gain pattern measurement automatization.",
   "author": {
     "name": "Michael Wolf",
@@ -15,9 +15,12 @@
   },
   "main": "./client/index.html",
   "devDependencies": {
-    "eslint": "^7.22.0"
+    "eslint": "^7.22.0",
+    "bootstrap": "5.3.8",
+    "plotly.js-dist-min": "4.1.2"
   },
   "scripts": {
-    "lint": "eslint --ext .js client"
+    "lint": "eslint --ext .js client",
+    "vendor": "cp node_modules/bootstrap/dist/css/bootstrap.min.css client/css/ && cp node_modules/bootstrap/dist/js/bootstrap.bundle.min.js client/scripts/vendors/ && cp node_modules/plotly.js-dist-min/plotly.min.js client/scripts/vendors/"
   }
 }
