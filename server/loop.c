@@ -2,6 +2,7 @@
 #include "stdint.h"
 #include "uv.h"
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <libwebsockets.h>
 #include "antscan.h"
 #include "time.h"
@@ -17,9 +18,9 @@ extern int16_t start_elev, stop_elev, resolution_elev, m, azimut_sector, resolut
 extern Frequency* freq;
 extern uv_mutex_t lock_pause_measurement;
 extern uv_cond_t cond_resume_measurement;
-extern bool measurement_thread_exit, measurement_thread_pause;
-extern scan_status_e scan_status;
-extern struct lws_context *context;
+extern atomic_bool measurement_thread_exit;
+extern bool measurement_thread_pause;
+extern _Atomic scan_status_e scan_status;
 extern double time_paused;
 double totalSteps, currentStep, azimutSteps, elevSteps, progress;
 double startTime, currentTime, timeOneStep, totalTime, timeLeft, elapsedTime;
@@ -142,8 +143,6 @@ void measurement_loop()
     scan_status = STOPPED;
     if(measurement_thread_exit == false) {
         app_message("Scan process finished.", MSG_SUCCESS);
-        /* Kick out app message immediately */
-        lws_service(context, 0);
     }
     measurement_thread_exit = false;
     free_freq();

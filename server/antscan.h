@@ -3,6 +3,7 @@
 
 #define NOTUSED(V) ((void)V)
 #define WSBUFFERSIZE 8192 /* Byte */
+#define MAX_CLIENTS 4
 
 #define WS_DEFAULT_IP "127.0.0.1"
 #define WS_DEFAULT_PORT 10024

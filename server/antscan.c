@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <limits.h>
+#include <stdatomic.h>
 #include <time.h>
 #include <errno.h>
 #include <arpa/inet.h>
@@ -36,13 +37,10 @@ static struct sockaddr_in ws_in;
 
 struct lws_context *context;
 static struct lws_context_creation_info info;
-static unsigned char wsbuffer[WSBUFFERSIZE];
-static unsigned char *pwsbuffer = wsbuffer;
-static int wsbuffer_len = 0;
-scan_status_e scan_status = STOPPED;
+_Atomic scan_status_e scan_status = STOPPED;
 uv_mutex_t lock_pause_measurement;
 uv_cond_t cond_resume_measurement;
-bool measurement_thread_exit = false;
+atomic_bool measurement_thread_exit = false;
 bool measurement_thread_pause = false;
 uv_thread_t measurement_thread;
 double pause_start, time_paused = 0;
@@ -53,24 +51,26 @@ uint16_t start_azimut, stop_azimut, n;
 int16_t start_elev, stop_elev, resolution_elev, m, azimut_sector, resolution_azimut;
 Frequency* freq;
 
+/* Outgoing messages: ring of the last MSG_QUEUE_LEN messages, each client keeps its own read position */
+#define MSG_QUEUE_LEN 64
+#define MSG_MAX_LEN 512
+
+struct ws_msg
+{
+    unsigned char buf[LWS_PRE + MSG_MAX_LEN];
+    size_t len;
+};
+
+static struct ws_msg msg_queue[MSG_QUEUE_LEN];
+static unsigned long msg_count = 0; /* total messages queued, next sequence number */
+static uv_mutex_t msg_lock;
+
 /**
  * One of these is created for each client connecting.
  */
 struct per_session_data
 {
-    struct per_session_data *pss_list;
-    struct lws *wsi;
-};
-
-/**
- *  One of these is created for each vhost our protocol is used with.
- */
-struct per_vhost_data
-{
-    struct lws_context *context;
-    struct lws_vhost *vhost;
-    const struct lws_protocols *protocol;
-    struct per_session_data *pss_list; // linked-list of live pss
+    unsigned long next_seq; /* next message sequence number to send */
 };
 
 /**
@@ -99,6 +99,69 @@ static bool measurement_thread_started = false;
 static bool in_scan(void)
 {
     return scan_status == RUNNING || scan_status == PAUSED;
+}
+
+/* Slow head/receiver operations run in their own thread, one at a time */
+static atomic_bool job_busy = false;
+static bool job_thread_started = false;
+static uv_thread_t job_thread;
+static struct
+{
+    server_command_e cmd;
+    int val;
+} job;
+
+static void job_run(void *arg)
+{
+    NOTUSED(arg);
+    char buffer[40];
+    switch (job.cmd)
+    {
+    case SERVER_CMD_SET_PAN:
+        set_pan_position(job.val);
+        snprintf(buffer, sizeof(buffer), "PAN Position set to %d°", job.val);
+        app_message(buffer, MSG_SUCCESS);
+        break;
+    case SERVER_CMD_SET_TILT:
+        set_tilt_position(job.val);
+        snprintf(buffer, sizeof(buffer), "TILT Position set to %d°", job.val);
+        app_message(buffer, MSG_SUCCESS);
+        break;
+    case SERVER_CMD_CALIBRATE_PT:
+        self_check();
+        app_message("Self-Check finished", MSG_SUCCESS);
+        break;
+    case SERVER_CMD_SET_HOME:
+        home();
+        app_message("Home Position", MSG_SUCCESS);
+        break;
+    case SERVER_CMD_CALIBRATE_ANTENNA:
+        init_receiver(start_f, stop_f);
+        app_message("Receiver calibrated. Change antenna", MSG_SUCCESS);
+        scan_status = CALIBRATED;
+        app_status();
+        break;
+    default:
+        break;
+    }
+    job_busy = false;
+}
+
+static void start_job(server_command_e cmd, int val)
+{
+    if (job_thread_started)
+    {
+        uv_thread_join(&job_thread);
+    }
+    job.cmd = cmd;
+    job.val = val;
+    job_busy = true;
+    job_thread_started = uv_thread_create(&job_thread, job_run, NULL) == 0;
+    if (!job_thread_started)
+    {
+        job_busy = false;
+        app_message("Cannot start operation", MSG_DANGER);
+    }
 }
 
 static void join_measurement_thread(void)
@@ -242,7 +305,6 @@ static void handle_client_request(void *in, size_t len)
     json_object *jarr = text ? json_tokener_parse(text) : NULL;
     free(text);
     int val, cmd;
-    char buffer[40];
     const char *err;
     /* We expect always an array from web application, command at index 0 */
     if (!json_object_is_type(jarr, json_type_array) || !get_int(jarr, SERVER_CMD, 0, INT_MAX, &cmd))
@@ -250,21 +312,17 @@ static void handle_client_request(void *in, size_t len)
         json_object_put(jarr);
         return;
     }
-    if (in_scan() && (cmd == SERVER_CMD_SET_PAN || cmd == SERVER_CMD_SET_TILT ||
-                      cmd == SERVER_CMD_CALIBRATE_PT || cmd == SERVER_CMD_SET_HOME))
+    if ((in_scan() || job_busy) &&
+        (cmd == SERVER_CMD_SET_PAN || cmd == SERVER_CMD_SET_TILT || cmd == SERVER_CMD_CALIBRATE_PT ||
+         cmd == SERVER_CMD_SET_HOME || cmd == SERVER_CMD_CALIBRATE_ANTENNA))
     {
-        app_message("Not possible while measuring", MSG_DANGER);
+        app_message("Not possible while measuring or busy", MSG_DANGER);
         json_object_put(jarr);
         return;
     }
     switch (cmd)
     {
     case SERVER_CMD_CALIBRATE_ANTENNA:
-        if (in_scan())
-        {
-            app_message("Not possible while measuring", MSG_DANGER);
-            break;
-        }
         join_measurement_thread();
         err = parse_calibration(jarr);
         if (err == NULL && file_init() != 0)
@@ -277,14 +335,15 @@ static void handle_client_request(void *in, size_t len)
             app_status();
             break;
         }
-        init_receiver(start_f, stop_f);
-        app_message("Receiver calibrated. Change antenna", MSG_SUCCESS);
-        lws_service(context, 0);
-        scan_status = CALIBRATED;
-        app_status();
+        start_job(SERVER_CMD_CALIBRATE_ANTENNA, 0);
         break;
     case SERVER_CMD_SCAN_START:
         /* Start scan only if reference antenna is already calibrated */
+        if (job_busy)
+        {
+            app_message("Busy", MSG_DANGER);
+            break;
+        }
         if (scan_status != CALIBRATED)
         {
             app_message("Reference antenna not calibrated.", MSG_DANGER);
@@ -304,7 +363,6 @@ static void handle_client_request(void *in, size_t len)
         }
         measurement_thread_started = true;
         app_message("Measurement started", MSG_SUCCESS);
-        lws_service(context, 0);
         app_status();
         break;
     case SERVER_CMD_SCAN_PAUSE:
@@ -315,7 +373,6 @@ static void handle_client_request(void *in, size_t len)
             uv_mutex_unlock(&lock_pause_measurement);
             pause_start = (double)time(NULL);
             app_message("Measurement paused", MSG_WARNING);
-            lws_service(context, 0);
             scan_status = PAUSED;
             app_status();
         }
@@ -327,7 +384,6 @@ static void handle_client_request(void *in, size_t len)
             uv_mutex_unlock(&lock_pause_measurement);
             time_paused += (double)time(NULL) - pause_start;
             app_message("Measurement continued", MSG_SUCCESS);
-            lws_service(context, 0);
             scan_status = RUNNING;
             app_status();
         }
@@ -345,27 +401,13 @@ static void handle_client_request(void *in, size_t len)
         uv_mutex_unlock(&lock_pause_measurement);
         join_measurement_thread();
         app_message("Measurement stopped", MSG_DANGER);
-        lws_service(context, 0);
         app_status();
         break;
     case SERVER_CMD_SET_PAN:
-        if (get_int(jarr, 1, 0, 360, &val))
-        {
-            set_pan_position(val);
-            snprintf(buffer, sizeof(buffer), "PAN Position set to %d°", val);
-            app_message(buffer, MSG_SUCCESS);
-        }
-        else
-        {
-            app_message("Wrong input", MSG_DANGER);
-        }
-        break;
     case SERVER_CMD_SET_TILT:
-        if (get_int(jarr, 1, -90, 90, &val))
+        if (get_int(jarr, 1, cmd == SERVER_CMD_SET_PAN ? 0 : -90, cmd == SERVER_CMD_SET_PAN ? 360 : 90, &val))
         {
-            set_tilt_position(val);
-            snprintf(buffer, sizeof(buffer), "TILT Position set to %d°", val);
-            app_message(buffer, MSG_SUCCESS);
+            start_job(cmd, val);
         }
         else
         {
@@ -373,17 +415,34 @@ static void handle_client_request(void *in, size_t len)
         }
         break;
     case SERVER_CMD_CALIBRATE_PT:
-        self_check();
-        app_message("Self-Check finished", MSG_SUCCESS);
-        break;
     case SERVER_CMD_SET_HOME:
-        home();
-        app_message("Home Position", MSG_SUCCESS);
+        start_job(cmd, 0);
         break;
     default:
         break;
     }
     json_object_put(jarr);
+}
+
+/**
+ * Queue a json object for all clients and release it. Safe to call from any thread.
+ */
+static void ws_send(json_object *jobj)
+{
+    size_t len = 0;
+    const char *p = json_object_to_json_string_length(jobj, JSON_C_TO_STRING_PLAIN, &len);
+    if (len <= MSG_MAX_LEN)
+    {
+        uv_mutex_lock(&msg_lock);
+        struct ws_msg *msg = &msg_queue[msg_count % MSG_QUEUE_LEN];
+        memcpy(&msg->buf[LWS_PRE], p, len);
+        msg->len = len;
+        msg_count++;
+        uv_mutex_unlock(&msg_lock);
+        /* Wakes the service thread, which then writes to all clients */
+        lws_cancel_service(context);
+    }
+    json_object_put(jobj);
 }
 
 /**
@@ -393,73 +452,75 @@ static int callback_broadcast(struct lws *wsi, enum lws_callback_reasons reason,
                               void *user, void *in, size_t len)
 {
     struct per_session_data *pss = (struct per_session_data *)user;
-    struct per_vhost_data *vhd = (struct per_vhost_data *)lws_protocol_vh_priv_get(lws_get_vhost(wsi), lws_get_protocol(wsi));
-    int m = 0;
 
     switch (reason)
     {
-    case LWS_CALLBACK_FILTER_NETWORK_CONNECTION:
+    case LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION:
         /* Limit number of connected clients */
-        if (num_clients > 3)
+        if (num_clients >= MAX_CLIENTS)
         {
-            lwsl_notice("3 clients already connected. New connection rejected...\n");
+            lwsl_notice("%d clients already connected. New connection rejected...\n", MAX_CLIENTS);
             return -1;
         }
-        break;
-
-    case LWS_CALLBACK_PROTOCOL_INIT:
-        vhd = lws_protocol_vh_priv_zalloc(lws_get_vhost(wsi), lws_get_protocol(wsi), sizeof(struct per_vhost_data));
-        vhd->context = lws_get_context(wsi);
-        vhd->protocol = lws_get_protocol(wsi);
-        vhd->vhost = lws_get_vhost(wsi);
-        break;
-
-    case LWS_CALLBACK_PROTOCOL_DESTROY:
         break;
 
     case LWS_CALLBACK_ESTABLISHED:
         ++num_clients;
         lwsl_notice("Client connected.\n");
-        pss->wsi = wsi;
-        lws_ll_fwd_insert(pss, pss_list, vhd->pss_list);
+        uv_mutex_lock(&msg_lock);
+        pss->next_seq = msg_count;
+        uv_mutex_unlock(&msg_lock);
+        /* Tell the new client where we are */
+        app_status();
         break;
 
     case LWS_CALLBACK_CLOSED:
-    case LWS_CALLBACK_WSI_DESTROY:
         --num_clients;
         lwsl_notice("Client disconnected.\n");
-        /* remove our closing pss from the list of live pss */
-        lws_ll_fwd_remove(struct per_session_data, pss_list, pss, vhd->pss_list);
+        break;
+
+    case LWS_CALLBACK_EVENT_WAIT_CANCELLED:
+        lws_callback_on_writable_all_protocol(context, lws_get_protocol(wsi));
         break;
 
     case LWS_CALLBACK_SERVER_WRITEABLE:
-        /* notice we allowed for LWS_PRE in the payload already */
-        m = lws_write(wsi, &pwsbuffer[LWS_SEND_BUFFER_PRE_PADDING], wsbuffer_len, LWS_WRITE_TEXT);
-        if (m < wsbuffer_len)
+    {
+        int m = 0;
+        bool more = false;
+        uv_mutex_lock(&msg_lock);
+        /* Skip messages that were overwritten while this client was slow */
+        if (msg_count - pss->next_seq > MSG_QUEUE_LEN)
+        {
+            pss->next_seq = msg_count - MSG_QUEUE_LEN;
+        }
+        if (pss->next_seq < msg_count)
+        {
+            struct ws_msg *msg = &msg_queue[pss->next_seq % MSG_QUEUE_LEN];
+            m = lws_write(wsi, &msg->buf[LWS_PRE], msg->len, LWS_WRITE_TEXT);
+            if (m >= (int)msg->len)
+            {
+                pss->next_seq++;
+            }
+            more = pss->next_seq < msg_count;
+        }
+        uv_mutex_unlock(&msg_lock);
+        if (m < 0)
         {
             lwsl_err("ERROR %d writing to ws socket\n", m);
             return -1;
         }
+        if (more)
+        {
+            lws_callback_on_writable(wsi);
+        }
         break;
+    }
 
     case LWS_CALLBACK_RECEIVE:
-        if (!vhd->pss_list || len <= 0)
+        if (len > 0)
         {
-            break;
+            handle_client_request(in, len);
         }
-        /* Reply empty json object on unknown request */
-        memcpy(&pwsbuffer[LWS_SEND_BUFFER_PRE_PADDING], "\"{}\"", 4);
-        wsbuffer_len = 4;
-        handle_client_request(in, len);
-        /*
-         * let every subscriber know we want to write something
-         * on them as soon as they are ready
-         */
-        lws_start_foreach_llp(struct per_session_data **, ppss, vhd->pss_list)
-        {
-            lws_callback_on_writable((*ppss)->wsi);
-        }
-        lws_end_foreach_llp(ppss, pss_list);
         break;
 
     default:
@@ -488,20 +549,6 @@ static struct lws_protocols protocols[] = {
     {NULL, NULL, 0, 0, 0, NULL, 0} /* terminator */
 };
 
-/**
- * Serialize json object into the websocket buffer and queue it for all clients.
- * Takes ownership of jobj.
- */
-static void ws_send(json_object *jobj)
-{
-    size_t len = 0;
-    const char *p = json_object_to_json_string_length(jobj, JSON_C_TO_STRING_PLAIN, &len);
-    memcpy(&pwsbuffer[LWS_SEND_BUFFER_PRE_PADDING], p, len);
-    wsbuffer_len = len;
-    lws_callback_on_writable_all_protocol(context, &protocols[1]);
-    json_object_put(jobj);
-}
-
 static void ws_send_cmd(const char *cmd, json_object *data)
 {
     json_object *jobj = json_object_new_object();
@@ -529,8 +576,6 @@ void app_measurement_point(int az, int el, int freq, double val)
     json_object_array_add(jarr, json_object_new_int(freq));
     json_object_array_add(jarr, json_object_new_double(val));
     ws_send_cmd("point", jarr);
-    /* Send measurement point immediately to web application */
-    lws_service(context, 0);
 }
 
 void app_progress(double progress, double totalTime, double timeLeft)
@@ -540,12 +585,10 @@ void app_progress(double progress, double totalTime, double timeLeft)
     json_object_array_add(jarr, json_object_new_int(totalTime));
     json_object_array_add(jarr, json_object_new_int(timeLeft));
     ws_send_cmd("progress", jarr);
-    lws_service(context, 0);
 }
 
 /**
- * Forward message to web application. Sent as soon as lws_service runs;
- * callers needing it immediately call lws_service themselves.
+ * Forward message to web application.
  */
 void app_message(const char *msg, app_msg_type_e type)
 {
@@ -606,6 +649,7 @@ static void sighandler(int sig)
 int main(int argc, char **argv)
 {
     clean();
+    uv_mutex_init(&msg_lock);
     uv_mutex_init(&lock_pause_measurement);
     uv_cond_init(&cond_resume_measurement);
 
