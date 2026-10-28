@@ -15,8 +15,6 @@ extern char file_name[25];
 extern uint16_t start_azimut, stop_azimut, n;
 extern int16_t start_elev, stop_elev, resolution_elev, m, azimut_sector, resolution_azimut;
 extern Frequency* freq;
-time_t now;
-struct tm* t;
 extern uv_mutex_t lock_pause_measurement;
 extern uv_cond_t cond_resume_measurement;
 extern bool measurement_thread_exit, measurement_thread_pause;
@@ -26,13 +24,13 @@ extern double time_paused;
 double totalSteps, currentStep, azimutSteps, elevSteps, progress;
 double startTime, currentTime, timeOneStep, totalTime, timeLeft, elapsedTime;
 
-void file_init()
+int file_init()
 {
-    now = time(NULL);
-    t = localtime(&now);
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
     for(int b = 0; b < freq_counter; b++)
     {
-        if(file_name[1] == '0')
+        if(file_name[0] == '\0')
         {
             snprintf(freq[b].file_path, FILENAME_MAX, "./server/data/scan_%02u_%02u_%04u_%02u_%02u_%02u_%dMHz.csv",
             t->tm_mday,
@@ -50,16 +48,12 @@ void file_init()
         freq[b].file_stream = fopen(freq[b].file_path, "w");
         if(freq[b].file_stream == NULL)
         {
-            printf("Cannot open a file");
-            clean_exit(freq, freq_counter);
-            return;
+            free_freq();
+            return -1;
         }
 
         fprintf(freq[b].file_stream, "START_FREQ:%d;STOP_FREQ:%d;MEASURE_FREQ:%d;REF_GAIN:%lf;\n", start_f, stop_f, freq[b].frequency, freq[b].reference_gain);
         fputs("TILT/PAN;", freq[b].file_stream);
-        if(azimut_sector == 360) {
-            azimut_sector = 359;
-        }
         for(int i = 0; i <= azimut_sector; i += resolution_azimut)
         {
             if(start_azimut >= 180)
@@ -72,23 +66,18 @@ void file_init()
         }
         fputs("\n", freq[b].file_stream);
     }
+    return 0;
 }
 
 void measurement_loop()
 {
     thread_to_core(2);
-    srand(time(NULL));
-    if(azimut_sector == 360) {
-        azimut_sector = 359;
-    }
     currentStep = 0;
     progress = 0;
     azimutSteps = (azimut_sector / resolution_azimut) + 1;
     elevSteps = (abs(start_elev - stop_elev) / resolution_elev) + 1;
     totalSteps = azimutSteps * elevSteps;
-    now = time(NULL);
-    t = localtime(&now);
-    startTime = (t->tm_hour * 3600) + (t->tm_min * 60) + t->tm_sec;
+    startTime = (double)time(NULL);
     for(m = start_elev; m <= stop_elev; m += resolution_elev)
     {
             set_tilt_position(m);
@@ -127,9 +116,7 @@ void measurement_loop()
                         break;
                     }
                 }
-                now = time(NULL);
-                t = localtime(&now);
-                currentTime = (t->tm_hour * 3600) + (t->tm_min * 60) + t->tm_sec;
+                currentTime = (double)time(NULL);
                 elapsedTime = currentTime - startTime - time_paused;
                 timeOneStep = elapsedTime / currentStep;
                 totalTime = timeOneStep * totalSteps;
@@ -159,13 +146,7 @@ void measurement_loop()
         lws_service(context, 0);
     }
     measurement_thread_exit = false;
-    for(int f = 0; f < freq_counter; f++)
-    {
-        if(freq[f].file_stream != NULL) {
-            fclose(freq[f].file_stream);
-        }
-    }
-    free(freq);
+    free_freq();
     /* App status is kicked via main loop */
     app_status();
     pthread_exit(0);

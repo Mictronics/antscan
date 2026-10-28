@@ -13,6 +13,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <limits.h>
+#include <time.h>
 #include <errno.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -37,15 +39,13 @@ static struct lws_context_creation_info info;
 static unsigned char wsbuffer[WSBUFFERSIZE];
 static unsigned char *pwsbuffer = wsbuffer;
 static int wsbuffer_len = 0;
-scan_status_e scan_status;
+scan_status_e scan_status = STOPPED;
 uv_mutex_t lock_pause_measurement;
 uv_cond_t cond_resume_measurement;
 bool measurement_thread_exit = false;
 bool measurement_thread_pause = false;
 uv_thread_t measurement_thread;
-time_t now2;
-struct tm* t2;
-double pause_start, pause_stop, time_paused = 0;
+double pause_start, time_paused = 0;
 
 int start_f, stop_f, freq_counter = 0;
 char file_name[25];
@@ -90,20 +90,147 @@ int thread_to_core(int core_id)
     return pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset);
 }
 
-/**
- * Parse json array and output content
- */
-static void json_parse_array(json_object *jarray, jarray_index_e key)
+#define MAX_FREQUENCIES 16
+#define FILENAME_MAX_LEN 24
+#define FILENAME_CHARS "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+
+static bool measurement_thread_started = false;
+
+static bool in_scan(void)
 {
-    json_object *jvalue;
-     for(int j = 0; j < freq_counter; j++) {
-        jvalue = json_object_array_get_idx(jarray, j);
-        if(key == TEST_FREQUENCY) {
-            freq[j].frequency = json_object_get_int(jvalue);
-        } else if(key == REFERENCE_GAIN) {
-            freq[j].reference_gain = json_object_get_double(jvalue);
+    return scan_status == RUNNING || scan_status == PAUSED;
+}
+
+static void join_measurement_thread(void)
+{
+    if (measurement_thread_started)
+    {
+        uv_thread_join(&measurement_thread);
+        measurement_thread_started = false;
+    }
+}
+
+/**
+ * Close all data files and release the frequency list.
+ */
+void free_freq(void)
+{
+    for (int f = 0; freq != NULL && f < freq_counter; f++)
+    {
+        if (freq[f].file_stream != NULL)
+        {
+            fclose(freq[f].file_stream);
         }
     }
+    free(freq);
+    freq = NULL;
+    freq_counter = 0;
+}
+
+static bool get_int(json_object *jarr, int idx, int lo, int hi, int *out)
+{
+    json_object *v = json_object_array_get_idx(jarr, idx);
+    if (!json_object_is_type(v, json_type_int))
+    {
+        return false;
+    }
+    int x = json_object_get_int(v);
+    if (x < lo || x > hi)
+    {
+        return false;
+    }
+    *out = x;
+    return true;
+}
+
+static bool get_number(json_object *jarr, int idx, double lo, double hi, double *out)
+{
+    json_object *v = json_object_array_get_idx(jarr, idx);
+    if (!json_object_is_type(v, json_type_int) && !json_object_is_type(v, json_type_double))
+    {
+        return false;
+    }
+    double x = json_object_get_double(v);
+    if (!(x >= lo && x <= hi))
+    {
+        return false;
+    }
+    *out = x;
+    return true;
+}
+
+/**
+ * Validate a calibration request and, if valid, store it in the scan globals.
+ * Returns NULL on success, otherwise a message for the client.
+ */
+static const char *parse_calibration(json_object *jarr)
+{
+    int fc, sector, az_res, el_start, el_stop, el_res, f_start, f_stop, f;
+    double g;
+    json_object *jname = json_object_array_get_idx(jarr, FILENAME);
+    json_object *jfreq = json_object_array_get_idx(jarr, TEST_FREQUENCY);
+    json_object *jgain = json_object_array_get_idx(jarr, REFERENCE_GAIN);
+
+    if (!get_int(jarr, FREQ_COUNTER, 1, MAX_FREQUENCIES, &fc) ||
+        !get_int(jarr, AZIMUTH_ANGLE, 0, 360, &sector) ||
+        !get_int(jarr, AZIMUT_RESOLUTION, 1, 360, &az_res) ||
+        !get_int(jarr, ELEVATION_START, -90, 90, &el_start) ||
+        !get_int(jarr, ELEVATION_STOP, el_start, 90, &el_stop) ||
+        !get_int(jarr, ELEVATION_RESOLUTION, 1, 180, &el_res) ||
+        !get_int(jarr, START_FREQUENCY, 1, 7000, &f_start) ||
+        !get_int(jarr, STOP_FREQUENCY, f_start, 7000, &f_stop) ||
+        !json_object_is_type(jname, json_type_string) ||
+        !json_object_is_type(jfreq, json_type_array) ||
+        !json_object_is_type(jgain, json_type_array) ||
+        json_object_array_length(jfreq) != (size_t)fc ||
+        json_object_array_length(jgain) != (size_t)fc)
+    {
+        return "Wrong input";
+    }
+    const char *name = json_object_get_string(jname);
+    size_t name_len = strlen(name);
+    if (name_len > FILENAME_MAX_LEN || strspn(name, FILENAME_CHARS) != name_len)
+    {
+        return "Wrong input";
+    }
+    for (int i = 0; i < fc; i++)
+    {
+        if (!get_int(jfreq, i, f_start, f_stop, &f) || !get_number(jgain, i, -100, 100, &g))
+        {
+            return "Wrong input";
+        }
+    }
+
+    /* Valid: replace any previous calibration */
+    free_freq();
+    scan_status = STOPPED;
+    freq = calloc(fc, sizeof(Frequency));
+    if (freq == NULL)
+    {
+        return "Out of memory";
+    }
+    freq_counter = fc;
+    for (int i = 0; i < fc; i++)
+    {
+        get_int(jfreq, i, f_start, f_stop, &freq[i].frequency);
+        get_number(jgain, i, -100, 100, &freq[i].reference_gain);
+    }
+    /* Empty name or all zeros (web app default) selects a timestamp name */
+    if (strspn(name, "0") == name_len)
+    {
+        name = "";
+    }
+    strcpy(file_name, name);
+    start_azimut = 360 - (sector / 2.0);
+    stop_azimut = sector / 2.0;
+    azimut_sector = sector == 360 ? 359 : sector;
+    resolution_azimut = az_res;
+    start_elev = el_start;
+    stop_elev = el_stop;
+    resolution_elev = el_res;
+    start_f = f_start;
+    stop_f = f_stop;
+    return NULL;
 }
 
 /**
@@ -111,162 +238,152 @@ static void json_parse_array(json_object *jarray, jarray_index_e key)
  */
 static void handle_client_request(void *in, size_t len)
 {
-    NOTUSED(len);
-    /* Parse json string */
-    json_object *jarr = json_tokener_parse(in);
-    enum json_type type;
-    json_object *jvalue;
-    enum server_command_e cmd = SERVER_CMD_NULL;
-    int val;
-    char buffer[25];
-    /* We expect always an array from web application */
-    /* Get server command at index 0 */
-    jvalue = json_object_array_get_idx(jarr, SERVER_CMD);
-    type = json_object_get_type(jvalue);
-    if (type == json_type_int)
+    char *text = strndup(in, len);
+    json_object *jarr = text ? json_tokener_parse(text) : NULL;
+    free(text);
+    int val, cmd;
+    char buffer[40];
+    const char *err;
+    /* We expect always an array from web application, command at index 0 */
+    if (!json_object_is_type(jarr, json_type_array) || !get_int(jarr, SERVER_CMD, 0, INT_MAX, &cmd))
     {
-        cmd = json_object_get_int(jvalue);
-        switch (cmd)
+        json_object_put(jarr);
+        return;
+    }
+    if (in_scan() && (cmd == SERVER_CMD_SET_PAN || cmd == SERVER_CMD_SET_TILT ||
+                      cmd == SERVER_CMD_CALIBRATE_PT || cmd == SERVER_CMD_SET_HOME))
+    {
+        app_message("Not possible while measuring", MSG_DANGER);
+        json_object_put(jarr);
+        return;
+    }
+    switch (cmd)
+    {
+    case SERVER_CMD_CALIBRATE_ANTENNA:
+        if (in_scan())
         {
-        case SERVER_CMD_CALIBRATE_ANTENNA: 
-            jvalue = json_object_array_get_idx(jarr, FREQ_COUNTER);
-            freq_counter = (int)json_object_get_int(jvalue);
-            freq = (Frequency*) malloc(freq_counter * sizeof(Frequency));
-            if(freq == NULL)
-            {
-                app_message("Malloc error", MSG_DANGER);
-                lws_service(context, 0);
-                clean_exit(freq, freq_counter);
-                exit(EXIT_FAILURE);
-            }
-
-            jvalue = json_object_array_get_idx(jarr, FILENAME);
-            strcpy(file_name, json_object_get_string(jvalue));
-            jvalue = json_object_array_get_idx(jarr, AZIMUTH_ANGLE);
-            azimut_sector = (int)json_object_get_int(jvalue);
-            jvalue = json_object_array_get_idx(jarr, AZIMUT_RESOLUTION);
-            resolution_azimut = (int)json_object_get_int(jvalue);
-            jvalue = json_object_array_get_idx(jarr, ELEVATION_START);
-            start_elev = (int)json_object_get_int(jvalue);
-            jvalue = json_object_array_get_idx(jarr, ELEVATION_STOP);
-            stop_elev = (int)json_object_get_int(jvalue);
-            jvalue = json_object_array_get_idx(jarr, ELEVATION_RESOLUTION);
-            resolution_elev = (int)json_object_get_int(jvalue);
-            jvalue = json_object_array_get_idx(jarr, START_FREQUENCY);
-            start_f = (int)json_object_get_int(jvalue);
-            jvalue = json_object_array_get_idx(jarr, STOP_FREQUENCY);
-            stop_f = (int)json_object_get_int(jvalue);
-            jvalue = json_object_array_get_idx(jarr, TEST_FREQUENCY);
-            json_parse_array(jvalue, TEST_FREQUENCY);
-            jvalue = json_object_array_get_idx(jarr, REFERENCE_GAIN);
-            json_parse_array(jvalue, REFERENCE_GAIN);
-
-            start_azimut = 360 - (azimut_sector / 2.0);
-            stop_azimut = azimut_sector / 2.0;
-
-            init_receiver(start_f, stop_f);
-            file_init();
-            app_message("Receiver calibrated. Change antenna", MSG_SUCCESS);
-            lws_service(context, 0);
+            app_message("Not possible while measuring", MSG_DANGER);
+            break;
+        }
+        join_measurement_thread();
+        err = parse_calibration(jarr);
+        if (err == NULL && file_init() != 0)
+        {
+            err = "Cannot open data file";
+        }
+        if (err != NULL)
+        {
+            app_message(err, MSG_DANGER);
+            app_status();
+            break;
+        }
+        init_receiver(start_f, stop_f);
+        app_message("Receiver calibrated. Change antenna", MSG_SUCCESS);
+        lws_service(context, 0);
+        scan_status = CALIBRATED;
+        app_status();
+        break;
+    case SERVER_CMD_SCAN_START:
+        /* Start scan only if reference antenna is already calibrated */
+        if (scan_status != CALIBRATED)
+        {
+            app_message("Reference antenna not calibrated.", MSG_DANGER);
+            break;
+        }
+        join_measurement_thread();
+        measurement_thread_pause = false;
+        measurement_thread_exit = false;
+        time_paused = 0;
+        scan_status = RUNNING;
+        if (uv_thread_create(&measurement_thread, measurement_loop, NULL) != 0)
+        {
             scan_status = CALIBRATED;
+            app_message("Cannot start measurement", MSG_DANGER);
             app_status();
             break;
-        case SERVER_CMD_SCAN_START: //start measurement loop
-            /* Start scan only if reference antenna is already calibrated */
-            if (scan_status == CALIBRATED)
-            {
-                measurement_thread_pause = false;
-                uv_thread_create(&measurement_thread, measurement_loop, NULL);
-            }
-            else
-            {
-                app_message("Reference antenna not calibrated.", MSG_DANGER);
-                lws_service(context, 0);
-            }
-            app_message("Measurement started", MSG_SUCCESS);
-            lws_service(context, 0);
-            scan_status = RUNNING;
-            app_status();
-            break;
-        case SERVER_CMD_SCAN_PAUSE: //pause measurement loop
-            if (scan_status == RUNNING)
-            {
-                /* Measurement running, try pause */
-                uv_mutex_lock(&lock_pause_measurement);
-                measurement_thread_pause = true;
-                uv_mutex_unlock(&lock_pause_measurement);
-                now2 = time(NULL);
-                t2 = localtime(&now2);
-                pause_start = (t2->tm_hour * 3600) + (t2->tm_min * 60) + t2->tm_sec;
-                app_message("Measurement paused", MSG_WARNING);
-                lws_service(context, 0);
-                scan_status = PAUSED;
-                app_status();
-            }
-            else
-            {
-                /* Measurement paused, try running */
-                uv_mutex_lock(&lock_pause_measurement);
-                measurement_thread_pause = false;
-                uv_cond_broadcast(&cond_resume_measurement);
-                uv_mutex_unlock(&lock_pause_measurement);
-                now2 = time(NULL);
-                t2 = localtime(&now2);
-                pause_stop = (t2->tm_hour * 3600) + (t2->tm_min * 60) + t2->tm_sec;
-                time_paused += pause_stop - pause_start;
-                app_message("Measurement continued", MSG_SUCCESS);
-                lws_service(context, 0);
-                scan_status = RUNNING;
-                app_status();
-            }
-            break;
-        case SERVER_CMD_SCAN_STOP: //stop measurement loop
+        }
+        measurement_thread_started = true;
+        app_message("Measurement started", MSG_SUCCESS);
+        lws_service(context, 0);
+        app_status();
+        break;
+    case SERVER_CMD_SCAN_PAUSE:
+        if (scan_status == RUNNING)
+        {
             uv_mutex_lock(&lock_pause_measurement);
-            measurement_thread_exit = true;
+            measurement_thread_pause = true;
+            uv_mutex_unlock(&lock_pause_measurement);
+            pause_start = (double)time(NULL);
+            app_message("Measurement paused", MSG_WARNING);
+            lws_service(context, 0);
+            scan_status = PAUSED;
+            app_status();
+        }
+        else if (scan_status == PAUSED)
+        {
+            uv_mutex_lock(&lock_pause_measurement);
             measurement_thread_pause = false;
             uv_cond_broadcast(&cond_resume_measurement);
             uv_mutex_unlock(&lock_pause_measurement);
-            uv_thread_join(&measurement_thread);
-            app_message("Measurement stoped", MSG_DANGER);
+            time_paused += (double)time(NULL) - pause_start;
+            app_message("Measurement continued", MSG_SUCCESS);
             lws_service(context, 0);
+            scan_status = RUNNING;
             app_status();
-            break;
-        case SERVER_CMD_SET_PAN: //set pan position
-            jvalue = json_object_array_get_idx(jarr, 1);
-            type = json_object_get_type(jvalue);
-            if(type == json_type_int) {
-                val = (int)json_object_get_int(jvalue);
-                set_pan_position(val);
-                sprintf(buffer, "PAN Position set to %d°", val);
-                app_message(buffer, MSG_SUCCESS);
-            } else {
-                app_message("Wrong input", MSG_DANGER);
-            }
-            break;
-        case SERVER_CMD_SET_TILT: //set tilt position
-            jvalue = json_object_array_get_idx(jarr, 1);
-            type = json_object_get_type(jvalue);
-            if(type == json_type_int) {
-                val = (int)json_object_get_int(jvalue);
-                set_tilt_position(val);
-                sprintf(buffer, "TILT Position set to %d°", val);
-                app_message(buffer, MSG_SUCCESS);
-            } else {
-                app_message("Wrong input", MSG_DANGER);
-            }
-            break;
-        case SERVER_CMD_CALIBRATE_PT: //self-check
-            self_check();
-            app_message("Self-Check finished", MSG_SUCCESS);
-            break;
-        case SERVER_CMD_SET_HOME: //home
-            home();
-            app_message("Home Position", MSG_SUCCESS);
-            break;
-        default:
+        }
+        break;
+    case SERVER_CMD_SCAN_STOP:
+        if (!in_scan())
+        {
+            app_message("No measurement running", MSG_WARNING);
             break;
         }
+        uv_mutex_lock(&lock_pause_measurement);
+        measurement_thread_exit = true;
+        measurement_thread_pause = false;
+        uv_cond_broadcast(&cond_resume_measurement);
+        uv_mutex_unlock(&lock_pause_measurement);
+        join_measurement_thread();
+        app_message("Measurement stopped", MSG_DANGER);
+        lws_service(context, 0);
+        app_status();
+        break;
+    case SERVER_CMD_SET_PAN:
+        if (get_int(jarr, 1, 0, 360, &val))
+        {
+            set_pan_position(val);
+            snprintf(buffer, sizeof(buffer), "PAN Position set to %d°", val);
+            app_message(buffer, MSG_SUCCESS);
+        }
+        else
+        {
+            app_message("Wrong input", MSG_DANGER);
+        }
+        break;
+    case SERVER_CMD_SET_TILT:
+        if (get_int(jarr, 1, -90, 90, &val))
+        {
+            set_tilt_position(val);
+            snprintf(buffer, sizeof(buffer), "TILT Position set to %d°", val);
+            app_message(buffer, MSG_SUCCESS);
+        }
+        else
+        {
+            app_message("Wrong input", MSG_DANGER);
+        }
+        break;
+    case SERVER_CMD_CALIBRATE_PT:
+        self_check();
+        app_message("Self-Check finished", MSG_SUCCESS);
+        break;
+    case SERVER_CMD_SET_HOME:
+        home();
+        app_message("Home Position", MSG_SUCCESS);
+        break;
+    default:
+        break;
     }
+    json_object_put(jarr);
 }
 
 /**
@@ -486,25 +603,11 @@ static void sighandler(int sig)
     exit(EXIT_SUCCESS);
 }
 
-void clean_exit(Frequency* freq, int freq_counter)
-{
-    close_socket();
-
-    for(int f = 0; f < freq_counter; f++)
-    {
-        if(freq[f].file_stream != NULL) {
-            fclose(freq[f].file_stream);
-        }
-    }
-
-    free(freq);
-}
-
 int main(int argc, char **argv)
 {
     clean();
-
-    memset(file_name, '0', sizeof(file_name));
+    uv_mutex_init(&lock_pause_measurement);
+    uv_cond_init(&cond_resume_measurement);
 
     if(create_socket() == -1)
     {
@@ -580,10 +683,6 @@ int main(int argc, char **argv)
          * requests to process)
          */
     }
-
-    sighandler(0);
-
-    clean_exit(freq, freq_counter);
 
     return 0;
 }

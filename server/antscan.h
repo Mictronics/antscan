@@ -66,7 +66,7 @@ typedef struct Frequencies
     double reference_gain;
 } Frequency;
 
-void clean_exit(Frequency* freq, int freq_counter);
+void free_freq(void);
 void app_message(const char *msg, app_msg_type_e type);
 void app_status();
 void app_measurement_point(int az, int el, int freq, double val);
