@@ -4,12 +4,13 @@
 
 #include "real.h"
 
+char receiver_resource[64] = "TCPIP::192.168.1.128";
+
 #ifdef REAL
 static char scpiCommand[128];
 static ViSession rmHandle, scopeHandle;
 static bool sessionOpen = false;
 static char scpiResponse[1024];
-static char ressourceString1[] = "TCPIP::192.168.1.128";
 
 /* Send one SCPI command, returns 0 on success */
 static int scpi(const char *fmt, ...)
@@ -49,7 +50,7 @@ int init_receiver(int start_freq, int stop_freq)
     {
         return -1;
     }
-    if (viOpen(rmHandle, ressourceString1, VI_NULL, VI_NULL, &scopeHandle) < VI_SUCCESS)
+    if (viOpen(rmHandle, receiver_resource, VI_NULL, VI_NULL, &scopeHandle) < VI_SUCCESS)
     {
         viClose(rmHandle);
         return -1;

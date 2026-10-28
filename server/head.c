@@ -59,11 +59,15 @@ int create_socket()
     return socket_desc;
 }
 
-int connect_server()
+int connect_server(const char *ip, int port)
 {
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(8899);
-    server_addr.sin_addr.s_addr = inet_addr("192.168.1.7");
+    server_addr.sin_port = htons(port);
+    if (inet_pton(AF_INET, ip, &server_addr.sin_addr) != 1)
+    {
+        printf("Invalid head IP\n");
+        return -1;
+    }
 
     if (connect(socket_desc, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
     {

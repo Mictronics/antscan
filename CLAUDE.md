@@ -11,7 +11,7 @@ Antscan automates antenna gain-pattern measurements: a pan-tilt head positions t
 Run everything from the repo root (paths in the Makefile and data output are root-relative).
 
 - Build server: `make` (produces `server/antscan`); `make clean`
-- Run server: `./server/antscan` (argp options: `--ws-ip`, `--ws-port`; defaults in `server/antscan.h`, `127.0.0.1:10024`)
+- Run server from the repo root: `./server/antscan` (options: `--ws-ip`, `--ws-port`, `--head-ip`, `--head-port`, `--receiver`; websocket default `127.0.0.1:10024`). It also serves `./client` over HTTP on the same port, so open `http://127.0.0.1:10024/`; websocket connections from other origins are rejected.
 - Lint client: `npm install && npm run lint` (eslint:recommended, `client/` only, vendors ignored; remaining errors are cross-file globals like `Plotly` since scripts aren't modules)
 - Diagrams: `design/*.plantuml` render into `out/design/` (PlantUML, SVG committed)
 
@@ -26,7 +26,7 @@ Three tiers, wired as in `design/komponentendiagramm.plantuml` and `design/seque
 - `server/antscan.c`: libwebsockets + libuv main loop. `handle_client_request` parses the client's **JSON array**; element positions are fixed by `jarray_index_e` and commands by `server_command_e` in `antscan.h`. Any protocol change must be made in both `antscan.h` and `client/scripts/index.js`. Server→client messages go through `app_message` / `app_status` / `app_done` / `app_measurement_point` / `app_progress`; the client reacts to `cmd` (`status`, `done`, `point`, ...), never to message text. Request validation is duplicated in `createDataFrame` (client) and `parse_calibration` (server): keep both in sync. These are thread-safe: they enqueue into a 64-entry ring (`ws_send`) and wake the lws service thread with `lws_cancel_service`; never call `lws_service` from another thread. Slow head/receiver operations (pan/tilt/home/check/receiver init) run in a one-at-a-time job thread (`start_job`, `job_busy`) so the service loop never blocks.
 - Scan state machine (`scan_status_e`: STOPPED → CALIBRATED → RUNNING ⇄ PAUSED, see `design/zustandsdiagramm.plantuml`). `CALIBRATE_ANTENNA` takes the whole scan config, allocates the per-frequency `Frequency[]`, inits the receiver and opens CSV files; `SCAN_START` is only honored once CALIBRATED (reference antenna measured, then the antenna under test swapped in).
 - `server/loop.c`: `measurement_loop` runs in its own `uv_thread` (pinned to core 2): elevation outer loop, azimuth inner loop, per step `set_pan/tilt_position` → `measure()` → `get_data()` per frequency + reference gain → CSV + `app_measurement_point`. Pause/stop use `lock_pause_measurement` / `cond_resume_measurement` / `measurement_thread_exit` globals shared (via `extern`) with `antscan.c`. Output: `server/data/*.csv` (gitignored).
-- Head and receiver calls return 0 / -1 (3 s socket timeouts, 60 s position wait); callers abort the scan or job with a danger message. `server/head.c`: raw TCP protocol to the pan-tilt head (IP hardcoded in `head.c`, currently `192.168.1.7`). `server/receiver.c`: VISA over TCPIP (resource string hardcoded, currently `TCPIP::192.168.1.128`).
+- Head and receiver calls return 0 / -1 (3 s socket timeouts, 60 s position wait); callers abort the scan or job with a danger message. `server/head.c`: raw TCP protocol to the pan-tilt head (`--head-ip/--head-port`, default `192.168.1.7:8899`). `server/receiver.c`: VISA over TCPIP (`--receiver`, default `TCPIP::192.168.1.128`).
 
 ## Simulation vs. real hardware
 

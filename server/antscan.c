@@ -33,6 +33,8 @@ static int debug_level = 0;
 static int syslog_options = LOG_PID | LOG_PERROR;
 static int num_clients = 0;
 static char ws_ip[20] = WS_DEFAULT_IP;
+static char head_ip[20] = "192.168.1.7";
+static int head_port = 8899;
 static struct sockaddr_in ws_in;
 
 struct lws_context *context;
@@ -485,6 +487,19 @@ static int callback_broadcast(struct lws *wsi, enum lws_callback_reasons reason,
     switch (reason)
     {
     case LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION:
+    {
+        /* Browsers send Origin: only accept pages served by this server (blocks cross-site websockets) */
+        char origin[128], host[128];
+        if (lws_hdr_copy(wsi, origin, sizeof(origin), WSI_TOKEN_ORIGIN) > 0)
+        {
+            const char *origin_host = strstr(origin, "://");
+            origin_host = origin_host ? origin_host + 3 : origin;
+            if (lws_hdr_copy(wsi, host, sizeof(host), WSI_TOKEN_HOST) <= 0 || strcmp(origin_host, host) != 0)
+            {
+                lwsl_notice("Rejected websocket from foreign origin %s\n", origin);
+                return -1;
+            }
+        }
         /* Limit number of connected clients */
         if (num_clients >= MAX_CLIENTS)
         {
@@ -492,6 +507,7 @@ static int callback_broadcast(struct lws *wsi, enum lws_callback_reasons reason,
             return -1;
         }
         break;
+    }
 
     case LWS_CALLBACK_ESTABLISHED:
         ++num_clients;
@@ -558,6 +574,17 @@ static int callback_broadcast(struct lws *wsi, enum lws_callback_reasons reason,
 
     return 0;
 }
+
+/**
+ * Serve the web application from ./client on the same port as the websocket.
+ */
+static const struct lws_http_mount client_mount = {
+    .mountpoint = "/",
+    .origin = "./client",
+    .def = "index.html",
+    .origin_protocol = LWSMPRO_FILE,
+    .mountpoint_len = 1,
+};
 
 /**
  * Websocket protocol definition.
@@ -656,7 +683,39 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
         }
         break;
     case OPT_WS_PORT:
-        ws_in.sin_port = atoi(arg);
+    case OPT_HEAD_PORT:
+    {
+        int port = atoi(arg);
+        if (port < 1 || port > 65535)
+        {
+            argp_error(state, "Invalid port '%s'", arg);
+        }
+        if (key == OPT_WS_PORT)
+        {
+            ws_in.sin_port = port;
+        }
+        else
+        {
+            head_port = port;
+        }
+        break;
+    }
+    case OPT_HEAD_IP:
+    {
+        struct in_addr addr;
+        if (inet_pton(AF_INET, arg, &addr) != 1)
+        {
+            argp_error(state, "Invalid IP '%s'", arg);
+        }
+        snprintf(head_ip, sizeof(head_ip), "%s", arg);
+        break;
+    }
+    case OPT_RECEIVER:
+        if (strlen(arg) >= sizeof(receiver_resource))
+        {
+            argp_error(state, "VISA resource too long");
+        }
+        strcpy(receiver_resource, arg);
         break;
     case ARGP_KEY_END:
         if (state->arg_num > 0)
@@ -690,20 +749,6 @@ int main(int argc, char **argv)
     uv_mutex_init(&lock_pause_measurement);
     uv_cond_init(&cond_resume_measurement);
 
-    if(create_socket() == -1)
-    {
-        return EXIT_FAILURE;
-    }
-
-    // Send connection request to server
-    #ifdef REAL
-    if (connect_server() == -1)
-    {
-        close_socket();
-        return EXIT_FAILURE;
-    }
-    #endif
-
     /* Set default IP addresses and ports for all service. */
     inet_pton(AF_INET, ws_ip, &ws_in.sin_addr);
     ws_in.sin_port = WS_DEFAULT_PORT;
@@ -714,6 +759,20 @@ int main(int argc, char **argv)
         exit(EXIT_SUCCESS);
     }
 
+    if(create_socket() == -1)
+    {
+        return EXIT_FAILURE;
+    }
+
+    // Send connection request to server
+    #ifdef REAL
+    if (connect_server(head_ip, head_port) == -1)
+    {
+        close_socket();
+        return EXIT_FAILURE;
+    }
+    #endif
+
     /* Take care to zero down the info struct, contains random garbage
      * from the stack otherwise.
      */
@@ -722,6 +781,7 @@ int main(int argc, char **argv)
     info.port = ws_in.sin_port;
     info.iface = ws_ip;
     info.protocols = protocols;
+    info.mounts = &client_mount;
     info.gid = -1;
     info.uid = -1;
     info.max_http_header_pool = 16;
