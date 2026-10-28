@@ -1,390 +1,659 @@
 <!doctype html>
 <html lang="en">
-
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Antenna Scan</title>
     <link rel="stylesheet" type="text/css" href="./css/bootstrap.min.css" />
     <link rel="stylesheet" type="text/css" href="./css/styles.css" />
-    <link rel="icon" href="favicon-32x32.png">
-    <script type="text/javascript" src="./scripts/vendors/bootstrap.bundle.min.js"></script>
+    <link rel="icon" href="favicon-32x32.png" />
+    <script
+      type="text/javascript"
+      src="./scripts/vendors/bootstrap.bundle.min.js"
+    ></script>
     <script type="text/javascript" src="./scripts/index.js"></script>
-    <script type="text/javascript" src='./scripts/vendors/plotly.min.js'></script>
+    <script
+      type="text/javascript"
+      src="./scripts/vendors/plotly.min.js"
+    ></script>
     <script type="text/javascript" src="./scripts/plotly.js"></script>
-</head>
+  </head>
 
-<body>
-    <div class="container-sm text-center">
-        <h1>Data input</h1>
-        <div class="input-group mb-3">
-            <span class="input-group-text">Filename</span>
-            <input type="text" class="form-control" id="inputFilename" placeholder="empty for default" maxlength="24"
-                aria-label="Filename" aria-describedby="inputFilename">
-            <span class="input-group-text">.csv</span>
+  <body>
+    <div class="container-sm d-grid gap-0 row-gap-4">
+      <h1>Data input</h1>
+      <div class="input-group">
+        <span class="input-group-text">Filename</span>
+        <input
+          type="text"
+          class="form-control"
+          id="inputFilename"
+          placeholder="empty for default"
+          maxlength="24"
+          aria-label="Filename"
+          aria-describedby="inputFilename"
+        />
+        <span class="input-group-text">.csv</span>
+      </div>
+
+      <div class="row">
+        <div class="input-group col">
+          <span class="input-group-text">Azimut angle</span>
+          <input
+            type="number"
+            class="form-control"
+            id="inputAzimutAngle"
+            min="0"
+            max="360"
+            step="1"
+            aria-label="azimutAngle"
+            aria-describedby="inputAzimutAngle"
+            placeholder="[0 - 360]"
+          />
+          <span class="input-group-text">°</span>
         </div>
 
-        <div class="row">
-            <br>
-            <br>
+        <div class="input-group col">
+          <span class="input-group-text">Azimut resolution</span>
+          <input
+            type="number"
+            class="form-control"
+            id="inputAzimutResolution"
+            min="1"
+            step="1"
+            aria-label="azimutResolution"
+            aria-describedby="inputAzimutResolution"
+            placeholder="[2 - 360]"
+          />
+          <span class="input-group-text">°</span>
+        </div>
+      </div>
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="inputSerpentine" />
+        <label class="form-check-label" for="inputSerpentine"
+          >Serpentine azimut sweep (alternate direction per elevation
+          row)</label
+        >
+      </div>
+
+      <div class="row">
+        <div class="input-group col">
+          <span class="input-group-text">Elevation start angle</span>
+          <input
+            type="number"
+            class="form-control"
+            id="inputElevStartAngle"
+            min="-90"
+            max="90"
+            step="1"
+            aria-label="elevationStartAngle"
+            aria-describedby="inputElevStartAngle"
+            placeholder="[-90 - 90]"
+          />
+          <span class="input-group-text">°</span>
         </div>
 
-        <div class="row">
-            <div class="input-group mb-3 col">
-                <span class="input-group-text">Azimut angle</span>
-                <input type="number" class="form-control" id="inputAzimutAngle" min="0" max="360" step="1"
-                    aria-label="azimutAngle" aria-describedby="inputAzimutAngle" placeholder="[0 - 360]">
-                <span class="input-group-text">°</span>
-            </div>
-
-            <div class="input-group mb-3 col">
-                <span class="input-group-text">Azimut resolution</span>
-                <input type="number" class="form-control" id="inputAzimutResolution" min="1" step="1"
-                    aria-label="azimutResolution" aria-describedby="inputAzimutResolution" placeholder="[2 - 360]">
-                <span class="input-group-text">°</span>
-            </div>
+        <div class="input-group col">
+          <span class="input-group-text">Elevation stop angle</span>
+          <input
+            type="number"
+            class="form-control"
+            id="inputElevStopAngle"
+            min="-90"
+            max="90"
+            step="1"
+            aria-label="elevationStopAngle"
+            aria-describedby="inputElevStopAngle"
+            placeholder="[-90 - 90]"
+          />
+          <span class="input-group-text">°</span>
         </div>
-        <div class="form-check mb-3">
-            <input class="form-check-input" type="checkbox" id="inputSerpentine">
-            <label class="form-check-label" for="inputSerpentine">Serpentine azimut sweep (alternate direction per elevation row)</label>
+      </div>
+      <div class="row">
+        <div class="input-group col">
+          <span class="input-group-text">Elevation resolution</span>
+          <input
+            type="number"
+            class="form-control"
+            id="inputElevResolution"
+            min="1"
+            step="1"
+            aria-label="elevationResolution"
+            aria-describedby="inputElevResolution"
+            placeholder="[2 - 90]"
+          />
+          <span class="input-group-text">°</span>
         </div>
+        <div class="col"></div>
+      </div>
 
-        <div class="row">
-            <br>
-            <br>
-        </div>
-
-        <div class="row">
-            <div class="input-group mb-3 col">
-                <span class="input-group-text">Elevation start angle</span>
-                <input type="number" class="form-control" id="inputElevStartAngle" min="-90" max="90" step="1"
-                    aria-label="elevationStartAngle" aria-describedby="inputElevStartAngle" placeholder="[-90 - 90]">
-                <span class="input-group-text">°</span>
-            </div>
-
-            <div class="input-group mb-3 col">
-                <span class="input-group-text">Elevation stop angle</span>
-                <input type="number" class="form-control" id="inputElevStopAngle" min="-90" max="90" step="1"
-                    aria-label="elevationStopAngle" aria-describedby="inputElevStopAngle" placeholder="[-90 - 90]">
-                <span class="input-group-text">°</span>
-            </div>
-        </div>
-
-        <div class="input-group mb-3">
-            <span class="input-group-text">Elevation resolution</span>
-            <input type="number" class="form-control" id="inputElevResolution" min="1" step="1"
-                aria-label="elevationResolution" aria-describedby="inputElevResolution" placeholder="[2 - 90]">
-            <span class="input-group-text">°</span>
-        </div>
-
-        <div class="row">
-            <br>
-            <br>
+      <div class="row">
+        <div class="input-group col">
+          <span class="input-group-text">Start frequency</span>
+          <input
+            type="number"
+            class="form-control"
+            id="inputStartFrequency"
+            min="0"
+            aria-label="startFrequency"
+            aria-describedby="inputStartFrequency"
+            placeholder="[1 - 7000]"
+          />
+          <span class="input-group-text">MHz</span>
         </div>
 
-        <div class="row">
-            <div class="input-group mb-3 col">
-                <span class="input-group-text">Start frequency</span>
-                <input type="number" class="form-control" id="inputStartFrequency" min="0" aria-label="startFrequency"
-                    aria-describedby="inputStartFrequency" placeholder="[1 - 7000]">
-                <span class="input-group-text">MHz</span>
-            </div>
+        <div class="input-group col">
+          <span class="input-group-text">Stop frequency</span>
+          <input
+            type="number"
+            class="form-control"
+            id="inputStopFrequency"
+            min="0"
+            aria-label="stopFrequency"
+            aria-describedby="inputStopFrequency"
+            placeholder="[1 - 7000]"
+          />
+          <span class="input-group-text">MHz</span>
+        </div>
+      </div>
 
-            <div class="input-group mb-3 col">
-                <span class="input-group-text">Stop frequency</span>
-                <input type="number" class="form-control" id="inputStopFrequency" min="0" aria-label="stopFrequency"
-                    aria-describedby="inputStopFrequency" placeholder="[1 - 7000]">
-                <span class="input-group-text">MHz</span>
-            </div>
+      <div class="row">
+        <div class="input-group col">
+          <span class="input-group-text">Measurement frequency</span>
+          <input
+            type="text"
+            class="form-control"
+            id="inputMeasureFrequency"
+            min="0"
+            aria-label="measureFrequency"
+            aria-describedby="inputMeasureFrequency"
+            placeholder="[1 - 7000] separeted by comma"
+          />
+          <span class="input-group-text">MHz</span>
         </div>
 
-        <div class="row">
-            <div class="input-group mb-3 col">
-                <span class="input-group-text">Measurement frequency</span>
-                <input type="text" class="form-control" id="inputMeasureFrequency" min="0" aria-label="measureFrequency"
-                    aria-describedby="inputMeasureFrequency" placeholder="[1 - 7000] separeted by comma">
-                <span class="input-group-text">MHz</span>
-            </div>
-
-            <div class="input-group mb-3 col">
-                <span class="input-group-text">Gain Reference Antenna</span>
-                <input type="text" class="form-control" id="inputGainRefAntenna" aria-label="gainRefAntenna"
-                    aria-describedby="inputGainRefAntenna" placeholder="[-100 - 100] separeted by comma">
-                <span class="input-group-text">dBm</span>
-            </div>
+        <div class="input-group col">
+          <span class="input-group-text">Gain Reference Antenna</span>
+          <input
+            type="text"
+            class="form-control"
+            id="inputGainRefAntenna"
+            aria-label="gainRefAntenna"
+            aria-describedby="inputGainRefAntenna"
+            placeholder="[-100 - 100] separeted by comma"
+          />
+          <span class="input-group-text">dBm</span>
         </div>
+      </div>
 
-        <div class="row">
-            <br>
-            <br>
+      <div class="row">
+        <div class="col">
+          <button
+            class="btn btn-success disabled"
+            type="submit"
+            id="button_start"
+          >
+            Start
+          </button>
         </div>
+        <div class="col">
+          <button
+            class="btn btn-warning disabled"
+            type="submit"
+            id="button_pause"
+          >
+            Pause
+          </button>
+        </div>
+        <div class="col">
+          <button
+            class="btn btn-danger disabled"
+            type="submit"
+            id="button_stop"
+          >
+            Stop
+          </button>
+        </div>
+        <div class="col">
+          <button class="btn btn-secondary" type="submit" id="button_calib">
+            Calibrate
+          </button>
+        </div>
+        <div class="col">
+          <button
+            type="button"
+            class="btn btn-secondary"
+            id="button_headcmd"
+            data-bs-toggle="modal"
+            data-bs-target="#headCommandModal"
+          >
+            Head
+          </button>
 
-        <div class="row">
-            <div class="col">
-                <button class="btn btn-success disabled" type="submit" id="button_start">Start</button>
-            </div>
-            <div class="col">
-                <button class="btn btn-warning disabled" type="submit" id="button_pause">Pause</button>
-            </div>
-            <div class="col">
-                <button class="btn btn-danger disabled" type="submit" id="button_stop">Stop</button>
-            </div>
-            <div class="col">
-                <button class="btn btn-secondary" type="submit" id="button_calib">Calibrate</button>
-            </div>
-            <div class="col">
-                <button type="button" class="btn btn-secondary" id="button_headcmd" data-bs-toggle="modal"
-                    data-bs-target="#headCommandModal">
-                    Head
-                </button>
-
-                <div class="modal fade" id="headCommandModal" data-bs-backdrop="static" data-bs-keyboard="false"
-                    tabindex="-1" aria-labelledby="staticBackdropLabel" aria-hidden="true">
-                    <div class="modal-dialog">
-                        <div class="modal-content">
-                            <div class="modal-header">
-                                <h5 class="modal-title" id="staticBackdropLabel">Head commands</h5>
-                                <button type="button" class="btn-close" data-bs-dismiss="modal"
-                                    aria-label="Close"></button>
-                            </div>
-                            <div class="modal-body">
-                                <div class="row">
-                                    <div class="input-group mb-3 col">
-                                        <span class="input-group-text">PAN</span>
-                                        <input type="number" class="form-control" id="inputPanPosition" min="0"
-                                            max="360" aria-label="panPosition" aria-describedby="inputPanPosition">
-                                        <span class="input-group-text">°</span>
-                                    </div>
-                                    <div class="col">
-                                        <button class="btn btn-secondary" type="submit" id="button_pan">Set PAN
-                                            Position</button>
-                                    </div>
-                                </div>
-                                <div class="row">
-                                    <div class="input-group mb-3 col">
-                                        <span class="input-group-text">TILT</span>
-                                        <input type="number" class="form-control" id="inputTiltPosition" min="-90"
-                                            max="90" aria-label="tiltPosition" aria-describedby="inputTiltPosition">
-                                        <span class="input-group-text">°</span>
-                                    </div>
-                                    <div class="col">
-                                        <button class="btn btn-secondary" type="submit" id="button_tilt">Set TILT
-                                            Position</button>
-                                    </div>
-                                </div>
-                                <div class="row">
-                                    <br>
-                                    <br>
-                                </div>
-                                <div class="row">
-                                    <div class="col">
-                                        <button class="btn btn-success" type="submit" id="button_home">Home</button>
-                                    </div>
-                                    <div class="col">
-                                        <button class="btn btn-warning" type="submit"
-                                            id="button_check">Self-check</button>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="modal-footer">
-                                <button type="button" class="btn btn-danger" data-bs-dismiss="modal">Close</button>
-                            </div>
-                        </div>
-                    </div>
+          <div
+            class="modal fade"
+            id="headCommandModal"
+            data-bs-backdrop="static"
+            data-bs-keyboard="false"
+            tabindex="-1"
+            aria-labelledby="staticBackdropLabel"
+            aria-hidden="true"
+          >
+            <div class="modal-dialog">
+              <div class="modal-content">
+                <div class="modal-header">
+                  <h5 class="modal-title" id="staticBackdropLabel">
+                    Head commands
+                  </h5>
+                  <button
+                    type="button"
+                    class="btn-close"
+                    data-bs-dismiss="modal"
+                    aria-label="Close"
+                  ></button>
                 </div>
-            </div>
-            <div class="col">
-                <button type="button" class="btn btn-primary disabled" id="button_data" data-bs-toggle="modal"
-                    data-bs-target="#dataModal">
-                    Live data 2D
-                </button>
-
-                <div class="modal fade" id="dataModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1"
-                    aria-labelledby="staticBackdropLabel" aria-hidden="true">
-                    <div class="modal-dialog modal-fullscreen">
-                        <div class="modal-content">
-                            <div class="modal-header">
-                                <h5 class="modal-title" id="staticBackdropLabel">Live data</h5>
-                                <button type="button" class="btn-close" data-bs-dismiss="modal"
-                                    aria-label="Close"></button>
-                            </div>
-                            <div class="modal-body">
-                                <div class="row">
-                                    <div style="height: 20px;" class="progress progress-bar  progress-bar-striped" id="progress" role="progressbar"
-                                        aria-label="Progress Bar" aria-valuenow="0" aria-valuemin="0"
-                                        aria-valuemax="100" style="width: 0%">0%</div>
-                                </div>
-                                <div class="row">
-                                    <div class="dropdown col">
-                                        <div class="row">
-                                            <br>
-                                        </div>
-                                        <div class="row">
-                                            <div class="col">
-                                                <button class="btn btn-primary dropdown-toggle" type="button"
-                                                    data-bs-toggle="dropdown" aria-expanded="false">
-                                                    Shown frequency
-                                                </button>
-                                                <ul class="dropdown-menu" id="frequencyDropdown">
-
-                                                </ul>
-                                            </div>
-                                        </div>
-                                        <div class="row">
-                                            <br>
-                                        </div>
-                                        <div class="row">
-                                            <div class="col">
-                                                <button class="btn btn-primary dropdown-toggle" type="button"
-                                                    data-bs-toggle="dropdown" aria-expanded="false">
-                                                    Elevation
-                                                </button>
-                                                <ul class="dropdown-menu" id="elevationDropdown">
-
-                                                </ul>
-                                            </div>
-                                        </div>
-                                        <div class="row">
-                                            <br>
-                                        </div>
-                                        <div class="row">
-                                            <div class="col">
-                                                <button class="btn btn-primary dropdown-toggle" type="button"
-                                                    data-bs-toggle="dropdown" aria-expanded="false">
-                                                    Azimut
-                                                </button>
-                                                <ul class="dropdown-menu" id="azimutDropdown">
-
-                                                </ul>
-                                            </div>
-                                        </div>
-                                        <div class="row">
-                                            <br>
-                                        </div>
-                                        <div class="row">
-                                            <div class="col">
-                                                <button class="btn btn-outline-secondary disabled" type="submit"
-                                                    id="currentElevation">Current Eleation:</button>
-                                            </div>
-                                        </div>
-                                        <div class="row">
-                                            <br>
-                                        </div>
-                                        <div class="row">
-                                            <div class="col">
-                                                <button class="btn btn-outline-secondary disabled" type="submit"
-                                                    id="currentAzimut">Current Azimut:</button>
-                                            </div>
-                                        </div>
-                                        <div class="row">
-                                            <br>
-                                        </div>
-                                        <div class="row">
-                                            <div class="col">
-                                                <button class="btn btn-outline-danger disabled" type="submit"
-                                                    id="time">Time Left:</button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="col" id="dataField"></div>
-                                    <div class="col" id="dataField2"></div>
-                                </div>
-                                <div class="row">
-                                    <div class="col" id="stats"></div>
-                                </div>
-                            </div>
-                            <div class="modal-footer">
-                                <button type="button" class="btn btn-primary" id="button_export_csv">Export CSV</button>
-                                <button type="button" class="btn btn-primary" id="button_export_png">Export PNG</button>
-                                <button type="button" class="btn btn-danger" data-bs-dismiss="modal">Close</button>
-                            </div>
-                        </div>
+                <div class="modal-body d-grid gap-0 row-gap-3">
+                  <div class="row">
+                    <div class="input-group col">
+                      <span class="input-group-text">PAN</span>
+                      <input
+                        type="number"
+                        class="form-control"
+                        id="inputPanPosition"
+                        min="0"
+                        max="360"
+                        aria-label="panPosition"
+                        aria-describedby="inputPanPosition"
+                      />
+                      <span class="input-group-text">°</span>
                     </div>
-                </div>
-            </div>
-            <div class="col">
-                <button type="button" class="btn btn-primary disabled" id="button_data3d" data-bs-toggle="modal"
-                    data-bs-target="#liveData3dModal">
-                    Live data 3D
-                </button>
-
-                <div class="modal fade" id="liveData3dModal" tabindex="-1" aria-labelledby="liveData3dModalLabel"
-                    aria-hidden="true">
-                    <div class="modal-dialog modal-fullscreen">
-                        <div class="modal-content">
-                            <div class="modal-header">
-                                <h1 class="modal-title fs-5" id="liveData3dModalLabel">Live data</h1>
-                                <button type="button" class="btn-close" data-bs-dismiss="modal"
-                                    aria-label="Close"></button>
-                            </div>
-                            <div class="modal-body">
-                                <div class="row">
-                                    <div style="height: 20px;" class="progress progress-bar  progress-bar-striped" id="progress3d" role="progressbar"
-                                        aria-label="Progress Bar" aria-valuenow="0" aria-valuemin="0"
-                                        aria-valuemax="100" style="width: 0%">0%</div>
-                                </div>
-                                <div class="row">
-                                    <br>
-                                    <br>
-                                </div>
-                                <div class="row">
-                                    <div class="col">
-                                        <div class="row">
-                                            <div class="col">
-                                                <button class="btn btn-primary dropdown-toggle" type="button"
-                                                    data-bs-toggle="dropdown" aria-expanded="false">
-                                                    Shown frequency
-                                                </button>
-                                                <ul class="dropdown-menu" id="frequencyDropdown3d">
-
-                                                </ul>
-                                            </div>
-                                        </div>
-                                        <div class="row">
-                                            <br>
-                                            <br>
-                                        </div>
-                                        <div class="row">
-                                            <div class="col">
-                                                <button class="btn btn-outline-secondary disabled" type="submit"
-                                                    id="currentAzimut3d">Current Azimut:</button>
-                                            </div>
-                                        </div>
-                                        <div class="row">
-                                            <br>
-                                            <br>
-                                        </div>
-                                        <div class="row">
-                                            <div class="col">
-                                                <button class="btn btn-outline-secondary disabled" type="submit"
-                                                    id="currentElevation3d">Current Eleation:</button>
-                                            </div>
-                                        </div>
-                                        <div class="row">
-                                            <br>
-                                            <br>
-                                        </div>
-                                        <div class="row">
-                                            <div class="col">
-                                                <button class="btn btn-outline-danger disabled" type="submit"
-                                                    id="time3d">Time Left:</button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="col" id="dataField3"></div>
-                                </div>
-                            </div>
-                            <div class="modal-footer">
-                                <button type="button" class="btn btn-danger" data-bs-dismiss="modal">Close</button>
-                            </div>
-                        </div>
+                    <div class="col">
+                      <button
+                        class="btn btn-secondary"
+                        type="submit"
+                        id="button_pan"
+                      >
+                        Set PAN Position
+                      </button>
                     </div>
+                  </div>
+                  <div class="row">
+                    <div class="input-group col">
+                      <span class="input-group-text">TILT</span>
+                      <input
+                        type="number"
+                        class="form-control"
+                        id="inputTiltPosition"
+                        min="-90"
+                        max="90"
+                        aria-label="tiltPosition"
+                        aria-describedby="inputTiltPosition"
+                      />
+                      <span class="input-group-text">°</span>
+                    </div>
+                    <div class="col">
+                      <button
+                        class="btn btn-secondary"
+                        type="submit"
+                        id="button_tilt"
+                      >
+                        Set TILT Position
+                      </button>
+                    </div>
+                  </div>
+                  <div class="row">
+                    <br />
+                    <br />
+                  </div>
+                  <div class="row">
+                    <div class="col">
+                      <button
+                        class="btn btn-success"
+                        type="submit"
+                        id="button_home"
+                      >
+                        Home
+                      </button>
+                    </div>
+                    <div class="col">
+                      <button
+                        class="btn btn-warning"
+                        type="submit"
+                        id="button_check"
+                      >
+                        Self-check
+                      </button>
+                    </div>
+                  </div>
                 </div>
+                <div class="modal-footer">
+                  <button
+                    type="button"
+                    class="btn btn-danger"
+                    data-bs-dismiss="modal"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
             </div>
+          </div>
         </div>
-        <div id="toastContainer" class="toast-container position-fixed top-0 end-0 p-1"></div>
-    <footer class="text-center text-muted small pb-2" id="appVersion"></footer>
+        <div class="col">
+          <button
+            type="button"
+            class="btn btn-primary disabled"
+            id="button_data"
+            data-bs-toggle="modal"
+            data-bs-target="#dataModal"
+          >
+            Live data 2D
+          </button>
+
+          <div
+            class="modal fade"
+            id="dataModal"
+            data-bs-backdrop="static"
+            data-bs-keyboard="false"
+            tabindex="-1"
+            aria-labelledby="staticBackdropLabel"
+            aria-hidden="true"
+          >
+            <div class="modal-dialog modal-fullscreen">
+              <div class="modal-content">
+                <div class="modal-header">
+                  <h5 class="modal-title" id="staticBackdropLabel">
+                    Live data
+                  </h5>
+                  <button
+                    type="button"
+                    class="btn-close"
+                    data-bs-dismiss="modal"
+                    aria-label="Close"
+                  ></button>
+                </div>
+                <div class="modal-body">
+                  <div class="row">
+                    <div
+                      style="height: 20px"
+                      class="progress progress-bar progress-bar-striped"
+                      id="progress"
+                      role="progressbar"
+                      aria-label="Progress Bar"
+                      aria-valuenow="0"
+                      aria-valuemin="0"
+                      aria-valuemax="100"
+                      style="width: 0%"
+                    >
+                      0%
+                    </div>
+                  </div>
+                  <div class="row">
+                    <div class="dropdown col">
+                      <div class="row">
+                        <br />
+                      </div>
+                      <div class="row">
+                        <div class="col">
+                          <button
+                            class="btn btn-primary dropdown-toggle"
+                            type="button"
+                            data-bs-toggle="dropdown"
+                            aria-expanded="false"
+                          >
+                            Shown frequency
+                          </button>
+                          <ul class="dropdown-menu" id="frequencyDropdown"></ul>
+                        </div>
+                      </div>
+                      <div class="row">
+                        <br />
+                      </div>
+                      <div class="row">
+                        <div class="col">
+                          <button
+                            class="btn btn-primary dropdown-toggle"
+                            type="button"
+                            data-bs-toggle="dropdown"
+                            aria-expanded="false"
+                          >
+                            Elevation
+                          </button>
+                          <ul class="dropdown-menu" id="elevationDropdown"></ul>
+                        </div>
+                      </div>
+                      <div class="row">
+                        <br />
+                      </div>
+                      <div class="row">
+                        <div class="col">
+                          <button
+                            class="btn btn-primary dropdown-toggle"
+                            type="button"
+                            data-bs-toggle="dropdown"
+                            aria-expanded="false"
+                          >
+                            Azimut
+                          </button>
+                          <ul class="dropdown-menu" id="azimutDropdown"></ul>
+                        </div>
+                      </div>
+                      <div class="row">
+                        <br />
+                      </div>
+                      <div class="row">
+                        <div class="col">
+                          <button
+                            class="btn btn-outline-secondary disabled"
+                            type="submit"
+                            id="currentElevation"
+                          >
+                            Current Eleation:
+                          </button>
+                        </div>
+                      </div>
+                      <div class="row">
+                        <br />
+                      </div>
+                      <div class="row">
+                        <div class="col">
+                          <button
+                            class="btn btn-outline-secondary disabled"
+                            type="submit"
+                            id="currentAzimut"
+                          >
+                            Current Azimut:
+                          </button>
+                        </div>
+                      </div>
+                      <div class="row">
+                        <br />
+                      </div>
+                      <div class="row">
+                        <div class="col">
+                          <button
+                            class="btn btn-outline-danger disabled"
+                            type="submit"
+                            id="time"
+                          >
+                            Time Left:
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="col" id="dataField"></div>
+                    <div class="col" id="dataField2"></div>
+                  </div>
+                  <div class="row">
+                    <div class="col" id="stats"></div>
+                  </div>
+                </div>
+                <div class="modal-footer">
+                  <button
+                    type="button"
+                    class="btn btn-primary"
+                    id="button_export_csv"
+                  >
+                    Export CSV
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-primary"
+                    id="button_export_png"
+                  >
+                    Export PNG
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-danger"
+                    data-bs-dismiss="modal"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col">
+          <button
+            type="button"
+            class="btn btn-primary disabled"
+            id="button_data3d"
+            data-bs-toggle="modal"
+            data-bs-target="#liveData3dModal"
+          >
+            Live data 3D
+          </button>
+
+          <div
+            class="modal fade"
+            id="liveData3dModal"
+            tabindex="-1"
+            aria-labelledby="liveData3dModalLabel"
+            aria-hidden="true"
+          >
+            <div class="modal-dialog modal-fullscreen">
+              <div class="modal-content">
+                <div class="modal-header">
+                  <h1 class="modal-title fs-5" id="liveData3dModalLabel">
+                    Live data
+                  </h1>
+                  <button
+                    type="button"
+                    class="btn-close"
+                    data-bs-dismiss="modal"
+                    aria-label="Close"
+                  ></button>
+                </div>
+                <div class="modal-body">
+                  <div class="row">
+                    <div
+                      style="height: 20px"
+                      class="progress progress-bar progress-bar-striped"
+                      id="progress3d"
+                      role="progressbar"
+                      aria-label="Progress Bar"
+                      aria-valuenow="0"
+                      aria-valuemin="0"
+                      aria-valuemax="100"
+                      style="width: 0%"
+                    >
+                      0%
+                    </div>
+                  </div>
+                  <div class="row">
+                    <br />
+                    <br />
+                  </div>
+                  <div class="row">
+                    <div class="col">
+                      <div class="row">
+                        <div class="col">
+                          <button
+                            class="btn btn-primary dropdown-toggle"
+                            type="button"
+                            data-bs-toggle="dropdown"
+                            aria-expanded="false"
+                          >
+                            Shown frequency
+                          </button>
+                          <ul
+                            class="dropdown-menu"
+                            id="frequencyDropdown3d"
+                          ></ul>
+                        </div>
+                      </div>
+                      <div class="row">
+                        <br />
+                        <br />
+                      </div>
+                      <div class="row">
+                        <div class="col">
+                          <button
+                            class="btn btn-outline-secondary disabled"
+                            type="submit"
+                            id="currentAzimut3d"
+                          >
+                            Current Azimut:
+                          </button>
+                        </div>
+                      </div>
+                      <div class="row">
+                        <br />
+                        <br />
+                      </div>
+                      <div class="row">
+                        <div class="col">
+                          <button
+                            class="btn btn-outline-secondary disabled"
+                            type="submit"
+                            id="currentElevation3d"
+                          >
+                            Current Eleation:
+                          </button>
+                        </div>
+                      </div>
+                      <div class="row">
+                        <br />
+                        <br />
+                      </div>
+                      <div class="row">
+                        <div class="col">
+                          <button
+                            class="btn btn-outline-danger disabled"
+                            type="submit"
+                            id="time3d"
+                          >
+                            Time Left:
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="col" id="dataField3"></div>
+                  </div>
+                </div>
+                <div class="modal-footer">
+                  <button
+                    type="button"
+                    class="btn btn-danger"
+                    data-bs-dismiss="modal"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div
+        id="toastContainer"
+        class="toast-container position-fixed top-0 end-0 p-1"
+      ></div>
+      <footer class="text-center text-muted small pb-2">
+        <span id="appVersion"></span> - Michael Wolf, Mictronics &copy; 2026
+      </footer>
     </div>
-</body>
-
+  </body>
 </html>
