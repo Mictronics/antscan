@@ -130,10 +130,12 @@ static void job_run(void *arg)
     case SERVER_CMD_CALIBRATE_PT:
         self_check();
         app_message("Self-Check finished", MSG_SUCCESS);
+        app_done("check");
         break;
     case SERVER_CMD_SET_HOME:
         home();
         app_message("Home Position", MSG_SUCCESS);
+        app_done("home");
         break;
     case SERVER_CMD_CALIBRATE_ANTENNA:
         init_receiver(start_f, stop_f);
@@ -252,7 +254,7 @@ static const char *parse_calibration(json_object *jarr)
     }
     const char *name = json_object_get_string(jname);
     size_t name_len = strlen(name);
-    if (name_len > FILENAME_MAX_LEN || strspn(name, FILENAME_CHARS) != name_len)
+    if (sector % 2 != 0 || name_len > FILENAME_MAX_LEN || strspn(name, FILENAME_CHARS) != name_len)
     {
         return "Wrong input";
     }
@@ -563,6 +565,14 @@ static void ws_send_cmd(const char *cmd, json_object *data)
 void app_status()
 {
     ws_send_cmd("status", json_object_new_int(scan_status));
+}
+
+/**
+ * Tell web application that a long running operation ("scan", "home", "check") ended.
+ */
+void app_done(const char *what)
+{
+    ws_send_cmd("done", json_object_new_string(what));
 }
 
 /**

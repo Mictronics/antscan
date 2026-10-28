@@ -1,3 +1,5 @@
+/* global bootstrap, append, init_plot, draw_plot */
+/* exported liveDataStatus, liveDataStatusEl, liveDataStatusAz */
 /**
  * See Javascript ES6 format for code style.
  *
@@ -27,7 +29,7 @@ const AppStatus = Object.freeze({
 });
 
 /**
- * Commands available on server side.
+ * Commands available on server side, keep in sync with server_command_e.
  */
 const ServerCommand = Object.freeze({
   CmdNull: 0,
@@ -38,26 +40,73 @@ const ServerCommand = Object.freeze({
   CmdPan: 5,
   CmdTilt: 6,
   CmdHome: 7,
-  CmdCalib: 8,
-  CmdStatus: 9,
-  CmdResult: 10
+  CmdCalib: 8
 });
 
+/* Plot selection: index into frequency list, elevation and azimut in degrees */
 let liveDataStatus = 0;
 let liveDataStatusEl = 0;
 let liveDataStatusAz = 0;
-let totalTime, totalSeconds, totalMinutes, totalHours, timeLeft, secondsLeft, minutesLeft, hoursLeft;
-
-function make_time(){
-  
-}
+let lastTotalTime = 0;
 
 /* Websocket handle */
 let wsocket = null;
-/* Check for websocket API availability */
-const connection = navigator.connection || navigator.mozConnection || null;
-if (connection === null) {
-  console.error('Network Information API not supported.');
+
+function byId(id) {
+  return document.getElementById(id);
+}
+
+/**
+ * Set text of an element and its twin in the 3D dialog (id + "3d").
+ */
+function setBoth(id, text) {
+  byId(id).textContent = text;
+  byId(`${id}3d`).textContent = text;
+}
+
+function setProgress(percent) {
+  ['progress', 'progress3d'].forEach((id) => {
+    const bar = byId(id);
+    bar.style.width = `${percent}%`;
+    bar.textContent = `${percent}%`;
+    bar.setAttribute('aria-valuenow', `${percent}`);
+  });
+}
+
+function formatTime(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0');
+  const s = String(Math.floor(seconds % 60)).padStart(2, '0');
+  return `${h}:${m}:${s}`;
+}
+
+function setTimeButtonState(running) {
+  ['time', 'time3d'].forEach((id) => {
+    byId(id).classList.replace(
+      running ? 'btn-outline-success' : 'btn-outline-danger',
+      running ? 'btn-outline-danger' : 'btn-outline-success'
+    );
+  });
+}
+
+/**
+ * A long running server operation ended, see app_done on server side.
+ */
+function handleDone(what) {
+  switch (what) {
+    case 'scan':
+      setBoth('time', `Total Time: ${formatTime(lastTotalTime)}`);
+      setTimeButtonState(false);
+      break;
+    case 'home':
+      byId('button_home').classList.remove('disabled');
+      break;
+    case 'check':
+      byId('button_check').classList.remove('disabled');
+      break;
+    default:
+      break;
+  }
 }
 
 /*
@@ -69,109 +118,54 @@ function wsConnect() {
 
   /* Callback when something was received from server */
   wsocket.onmessage = (e) => {
-    let msg = JSON.parse(e.data);
+    const msg = JSON.parse(e.data);
     /* Ensure we have the right json format */
-    if (
-      msg !== null &&
-      typeof msg === 'object' &&
-      msg.hasOwnProperty('cmd') &&
-      msg.hasOwnProperty('data')
-    ) {
-      switch (msg.cmd) {
-        case 'primary':
-          showToast(msg.data, ToastType.Primary);
-          break;
-        case 'secondary':
-          showToast(msg.data, ToastType.Secondary);
-          break;
-        case 'success':
-          showToast(msg.data, ToastType.Success);
-          if(msg.data == 'Scan process finished.') {
-            if(totalMinutes < 10 && totalSeconds < 10) {
-              document.getElementById('time').innerHTML = `Total Time: ${totalHours}:0${totalMinutes}:0${totalSeconds}`;
-              document.getElementById('time3d').innerHTML = `Total Time: ${totalHours}:0${totalMinutes}:0${totalSeconds}`;
-            } else if (totalMinutes < 10) {
-              document.getElementById('time').innerHTML = `Total Time: ${totalHours}:0${totalMinutes}:${totalSeconds}`;
-              document.getElementById('time3d').innerHTML = `Total Time: ${totalHours}:0${totalMinutes}:${totalSeconds}`;
-            } else if(totalSeconds < 10) {
-              document.getElementById('time').innerHTML = `Total Time: ${totalHours}:${totalMinutes}:0${totalSeconds}`;
-              document.getElementById('time3d').innerHTML = `Total Time: ${totalHours}:${totalMinutes}:0${totalSeconds}`;
-            } else {
-              document.getElementById('time').innerHTML = `Total Time: ${totalHours}:${totalMinutes}:${totalSeconds}`;
-              document.getElementById('time3d').innerHTML = `Total Time: ${totalHours}:${totalMinutes}:${totalSeconds}`;
-            }
-            document.getElementById('time').classList.replace('btn-outline-danger', 'btn-outline-success');
-            document.getElementById('time3d').classList.replace('btn-outline-danger', 'btn-outline-success');
-          } else if(msg.data == 'Home Position') {
-            document.getElementById('button_home').classList.remove('disabled');
-          } else if(msg.data == 'Self-Check finished') {
-            document.getElementById('button_check').classList.remove('disabled');
-          }
-          break;
-        case 'info':
-          showToast(msg.data, ToastType.Info);
-          break;
-        case 'warning':
-          showToast(msg.data, ToastType.Warning);
-          break;
-        case 'danger':
-          showToast(msg.data, ToastType.Danger);
-          break;
-        case 'light':
-          showToast(msg.data, ToastType.Light);
-          break;
-        case 'dark':
-          showToast(msg.data, ToastType.Dark);
-          break;
-        case 'status':
-          app_status_handler(msg.data);
-          break;
-        case 'point':
-          console.info(msg.data);
-          append(msg.data[0], msg.data[1], msg.data[2], msg.data[3]);
-          document.getElementById('currentAzimut').innerText = `Current Azimut: ${msg.data[0]}`;
-          document.getElementById('currentElevation').innerText = `Current Elevation: ${msg.data[1]}`;
-          document.getElementById('currentAzimut3d').innerText = `Current Azimut: ${msg.data[0]}`;
-          document.getElementById('currentElevation3d').innerText = `Current Elevation: ${msg.data[1]}`;
-          break;
-        case 'progress':
-          document.getElementById('progress').setAttribute("style", `width: ${msg.data[0]}%`);
-          document.getElementById('progress').innerHTML = `${msg.data[0]}%`;
-          document.getElementById('progress').setAttribute("aria-valuenow", `${msg.data[0]}`);
-          document.getElementById('progress3d').setAttribute("style", `width: ${msg.data[0]}%`);
-          document.getElementById('progress3d').innerHTML = `${msg.data[0]}%`;
-          document.getElementById('progress3d').setAttribute("aria-valuenow", `${msg.data[0]}`);
-          totalTime = msg.data[1];
-          totalSeconds = totalTime % 60;
-          totalTime -= totalSeconds;
-          totalMinutes = totalTime % 3600;
-          totalTime -= totalMinutes;
-          totalMinutes /= 60;
-          totalHours = totalTime / 3600;
-          timeLeft = msg.data[2];
-          secondsLeft = timeLeft % 60;
-          timeLeft -= secondsLeft;
-          minutesLeft = timeLeft % 3600;
-          timeLeft -= minutesLeft;
-          minutesLeft /= 60;
-          hoursLeft = timeLeft / 3600;
-          if(minutesLeft < 10 && secondsLeft < 10) {
-            document.getElementById('time').innerHTML = `Time Left: ${hoursLeft}:0${minutesLeft}:0${secondsLeft}`;
-            document.getElementById('time3d').innerHTML = `Time Left: ${hoursLeft}:0${minutesLeft}:0${secondsLeft}`;
-          } else if(minutesLeft < 10) {
-            document.getElementById('time').innerHTML = `Time Left: ${hoursLeft}:0${minutesLeft}:${secondsLeft}`;
-            document.getElementById('time3d').innerHTML = `Time Left: ${hoursLeft}:0${minutesLeft}:${secondsLeft}`;
-          } else if(secondsLeft < 10) {
-            document.getElementById('time').innerHTML = `Time Left: ${hoursLeft}:${minutesLeft}:0${secondsLeft}`;
-            document.getElementById('time3d').innerHTML = `Time Left: ${hoursLeft}:${minutesLeft}:0${secondsLeft}`;
-          } else {
-            document.getElementById('time').innerHTML = `Time Left: ${hoursLeft}:${minutesLeft}:${secondsLeft}`;
-            document.getElementById('time3d').innerHTML = `Time Left: ${hoursLeft}:${minutesLeft}:${secondsLeft}`;
-          }
-          break;
-        default:
-          break;
-      }
+    if (msg === null || typeof msg !== 'object' || !('cmd' in msg) || !('data' in msg)) {
+      return;
+    }
+    switch (msg.cmd) {
+      case 'primary':
+        showToast(msg.data, ToastType.Primary);
+        break;
+      case 'secondary':
+        showToast(msg.data, ToastType.Secondary);
+        break;
+      case 'success':
+        showToast(msg.data, ToastType.Success);
+        break;
+      case 'info':
+        showToast(msg.data, ToastType.Info);
+        break;
+      case 'warning':
+        showToast(msg.data, ToastType.Warning);
+        break;
+      case 'danger':
+        showToast(msg.data, ToastType.Danger);
+        break;
+      case 'light':
+        showToast(msg.data, ToastType.Light);
+        break;
+      case 'dark':
+        showToast(msg.data, ToastType.Dark);
+        break;
+      case 'status':
+        app_status_handler(msg.data);
+        break;
+      case 'done':
+        handleDone(msg.data);
+        break;
+      case 'point':
+        append(msg.data[0], msg.data[1], msg.data[2], msg.data[3]);
+        setBoth('currentAzimut', `Current Azimut: ${msg.data[0]}`);
+        setBoth('currentElevation', `Current Elevation: ${msg.data[1]}`);
+        break;
+      case 'progress':
+        setProgress(msg.data[0]);
+        lastTotalTime = msg.data[1];
+        setBoth('time', `Time Left: ${formatTime(msg.data[2])}`);
+        break;
+      default:
+        break;
     }
   };
   /* Connection closed or lost callback, try reconnect every 5 seconds */
@@ -208,7 +202,7 @@ function showToast(message, type) {
 
   const toastBody = document.createElement('div');
   toastBody.classList.add('toast-body');
-  toastBody.innerHTML = message;
+  toastBody.textContent = message;
 
   toast.appendChild(toastHeader);
   toastHeader.appendChild(toastBody);
@@ -261,7 +255,7 @@ function showToast(message, type) {
     /* Wait for fade out animation end */
     e.currentTarget.addEventListener('animationend', (e) => {
       /* Then remove toast from DOM list */
-      document.getElementById('toastContainer').removeChild(e.currentTarget);
+      byId('toastContainer').removeChild(e.currentTarget);
     });
     /* Initiate close animation when toast shall be hidden */
     e.currentTarget.classList.replace(
@@ -273,7 +267,7 @@ function showToast(message, type) {
   });
 
   /* Add to DOM, initialize toast via bootstrap and show */
-  document.getElementById('toastContainer').appendChild(toast);
+  byId('toastContainer').appendChild(toast);
   const t = new bootstrap.Toast(toast, {
     autohide: true,
     animation: false,
@@ -283,308 +277,193 @@ function showToast(message, type) {
 }
 
 /**
- * Send server command.
+ * Send server command. Returns false if there is no connection.
  */
 function sendServerCommand(data) {
-  if (wsocket !== null) {
-    /* Create json string and send via websocket */
-    wsocket.send(JSON.stringify(data));
+  if (wsocket === null || wsocket.readyState !== WebSocket.OPEN) {
+    showToast('No Connection', ToastType.Danger);
+    return false;
   }
+  wsocket.send(JSON.stringify(data));
+  return true;
 }
 
+/**
+ * Mark input elements as valid or invalid, returns ok.
+ */
+function mark(ids, ok) {
+  ids.forEach((id) => {
+    const classes = byId(id).classList;
+    classes.remove('is-valid', 'is-invalid');
+    classes.add(ok ? 'is-valid' : 'is-invalid');
+  });
+  return ok;
+}
+
+/**
+ * Split a comma separated list into numbers, empty entries become NaN.
+ */
+function parseList(text) {
+  return text.split(',').map((v) => (v.trim() === '' ? NaN : Number(v)));
+}
+
+function isIntIn(value, min, max) {
+  return Number.isInteger(value) && value >= min && value <= max;
+}
+
+/**
+ * Validate the configuration form. Returns the server command frame or false.
+ * Rules match parse_calibration() on the server.
+ */
 function createDataFrame() {
-  let filename = document.getElementById('inputFilename').value;
-  document.getElementById('inputFilename').classList.remove('is-valid', 'is-invalid');
-  if(filename.length > 25) {
-    document.getElementById('inputFilename').classList.add('is-invalid');
-    return false;
-  }
-  if(filename.length === 0) {
-    filename = "000000000000000000000000";
-  }
-  document.getElementById('inputFilename').classList.add('is-valid');
+  const num = (id) => byId(id).valueAsNumber;
+  const filename = byId('inputFilename').value;
+  const azAngle = num('inputAzimutAngle');
+  const azResolution = num('inputAzimutResolution');
+  const elStart = num('inputElevStartAngle');
+  const elStop = num('inputElevStopAngle');
+  const elResolution = num('inputElevResolution');
+  const startFrequency = num('inputStartFrequency');
+  const stopFrequency = num('inputStopFrequency');
+  const testFrequency = parseList(byId('inputMeasureFrequency').value);
+  const refGain = parseList(byId('inputGainRefAntenna').value);
 
-  let azAngle = document.getElementById('inputAzimutAngle').valueAsNumber;
-  document.getElementById('inputAzimutAngle').classList.remove('is-valid', 'is-invalid');
-  if(azAngle < 0 || azAngle > 360 || Number.isNaN(azAngle)) {
-    document.getElementById('inputAzimutAngle').classList.add('is-invalid');
-    return false;
-  }
-  document.getElementById('inputAzimutAngle').classList.add('is-valid');
+  /* Single field checks */
+  let ok = true;
+  [
+    [['inputFilename'], /^[A-Za-z0-9_-]{0,24}$/.test(filename)],
+    [['inputAzimutAngle'], isIntIn(azAngle, 0, 360) && azAngle % 2 === 0],
+    [['inputAzimutResolution'], isIntIn(azResolution, 2, 360)],
+    [['inputElevStartAngle'], isIntIn(elStart, -90, 90)],
+    [['inputElevStopAngle'], isIntIn(elStop, -90, 90)],
+    [['inputElevResolution'], isIntIn(elResolution, 2, 90)],
+    [['inputStartFrequency'], isIntIn(startFrequency, 1, 7000)],
+    [['inputStopFrequency'], isIntIn(stopFrequency, 1, 7000)],
+    [['inputMeasureFrequency'], testFrequency.every((f) => isIntIn(f, startFrequency, stopFrequency)) &&
+      new Set(testFrequency).size === testFrequency.length],
+    [['inputGainRefAntenna'], refGain.every((g) => g >= -100 && g <= 100)]
+  ].forEach(([ids, valid]) => {
+    ok = mark(ids, valid) && ok;
+  });
 
-  let azResolution = document.getElementById('inputAzimutResolution').valueAsNumber;
-  document.getElementById('inputAzimutResolution').classList.remove('is-valid', 'is-invalid');
-  if(azResolution < 2 || azResolution > 360 || Number.isNaN(azResolution)) {
-    document.getElementById('inputAzimutResolution').classList.add('is-invalid');
-    return false;
-  }
-  document.getElementById('inputAzimutResolution').classList.add('is-valid');
-  if(azAngle % azResolution != 0) {
-    document.getElementById('inputAzimutAngle').classList.remove('is-valid', 'is-invalid');
-    document.getElementById('inputAzimutResolution').classList.remove('is-valid', 'is-invalid');
-    document.getElementById('inputAzimutAngle').classList.add('is-invalid');
-    document.getElementById('inputAzimutResolution').classList.add('is-invalid');
-    return false;
-  }
-
-  let elStartAngle = document.getElementById('inputElevStartAngle').valueAsNumber;
-  document.getElementById('inputElevStartAngle').classList.remove('is-valid', 'is-invalid');
-  if(elStartAngle < -90 || elStartAngle > 90 || Number.isNaN(elStartAngle)) {
-    document.getElementById('inputElevStartAngle').classList.add('is-invalid');
-    return false;
-  }
-
-  let elStopAngle = document.getElementById('inputElevStopAngle').valueAsNumber;
-  document.getElementById('inputElevStopAngle').classList.remove('is-valid', 'is-invalid');
-  if(elStopAngle < -90 || elStopAngle > 90 || Number.isNaN(elStopAngle)) {
-    document.getElementById('inputElevStopAngle').classList.add('is-invalid');
-    return false;
-  }
-
-  if(elStartAngle > elStopAngle) {
-    document.getElementById('inputElevStartAngle').classList.add('is-invalid');
-    document.getElementById('inputElevStopAngle').classList.add('is-invalid');
-    return false;
-  }
-  document.getElementById('inputElevStartAngle').classList.add('is-valid');
-  document.getElementById('inputElevStopAngle').classList.add('is-valid');
-
-  let elResolution = document.getElementById('inputElevResolution').valueAsNumber;
-  document.getElementById('inputElevResolution').classList.remove('is-valid', 'is-invalid');
-  if(elResolution < 2 || elResolution > 90 || Number.isNaN(elResolution)) {
-    document.getElementById('inputElevResolution').classList.add('is-invalid');
-    return false;
-  }
-  document.getElementById('inputElevResolution').classList.add('is-valid');
-  if((Math.abs(elStartAngle - elStopAngle)) % elResolution != 0) {
-    document.getElementById('inputElevStartAngle').classList.remove('is-valid', 'is-invalid');
-    document.getElementById('inputElevStopAngle').classList.remove('is-valid', 'is-invalid');
-    document.getElementById('inputElevResolution').classList.remove('is-valid', 'is-invalid');
-    document.getElementById('inputElevStartAngle').classList.add('is-invalid');
-    document.getElementById('inputElevStopAngle').classList.add('is-invalid');
-    document.getElementById('inputElevResolution').classList.add('is-invalid');
-    return false;
-  }
-
-  let startFrequency = document.getElementById('inputStartFrequency').valueAsNumber;
-  document.getElementById('inputStartFrequency').classList.remove('is-valid', 'is-invalid');
-  if(startFrequency < 1 || startFrequency > 7000 || Number.isNaN(startFrequency)) {
-    document.getElementById('inputStartFrequency').classList.add('is-invalid');
-    return false;
-  }
-
-  let stopFrequency = document.getElementById('inputStopFrequency').valueAsNumber;
-  document.getElementById('inputStopFrequency').classList.remove('is-valid', 'is-invalid');
-  if(stopFrequency < 1 || stopFrequency > 7000 || Number.isNaN(stopFrequency)) {
-    document.getElementById('inputStopFrequency').classList.add('is-invalid');
-    return false;
-  }
-
-  if(startFrequency >= stopFrequency) {
-    document.getElementById('inputStartFrequency').classList.add('is-invalid');
-    document.getElementById('inputStopFrequency').classList.add('is-invalid');
-    return false;
-  }
-  document.getElementById('inputStartFrequency').classList.add('is-valid');
-  document.getElementById('inputStopFrequency').classList.add('is-valid');
-
-  let testFrequency = document.getElementById('inputMeasureFrequency').value.split(',');
-  document.getElementById('inputMeasureFrequency').classList.remove('is-valid', 'is-invalid');
-  if(testFrequency.length === 0) {
-    document.getElementById('inputMeasureFrequency').classList.add('is-invalid');
-    return false;
-  }
-  for(let i = 0; i < testFrequency.length; i++) {
-    let f_val = Number.parseInt(testFrequency[i], 10);
-    if(f_val < 1 || f_val > 7000 || Number.isNaN(f_val) || f_val < startFrequency || f_val > stopFrequency) {
-      document.getElementById('inputMeasureFrequency').classList.add('is-invalid');
-      return false;
+  /* Relations between fields, only ever mark invalid */
+  [
+    [['inputAzimutAngle', 'inputAzimutResolution'], azAngle % azResolution === 0],
+    [['inputElevStartAngle', 'inputElevStopAngle'], elStart <= elStop],
+    [['inputElevStartAngle', 'inputElevStopAngle', 'inputElevResolution'], Math.abs(elStop - elStart) % elResolution === 0],
+    [['inputStartFrequency', 'inputStopFrequency'], startFrequency < stopFrequency],
+    /* One reference gain for every measurement frequency */
+    [['inputMeasureFrequency', 'inputGainRefAntenna'], testFrequency.length === refGain.length]
+  ].forEach(([ids, valid]) => {
+    if (!valid) {
+      ok = mark(ids, false);
     }
-    testFrequency[i] = f_val;
-  }
-  document.getElementById('inputMeasureFrequency').classList.add('is-valid');
-
-  let refGain = document.getElementById('inputGainRefAntenna').value.split(',');
-  document.getElementById('inputGainRefAntenna').classList.remove('is-valid', 'is-invalid');
-  if(refGain.length === 0) {
-    document.getElementById('inputGainRefAntenna').classList.add('is-invalid');
-    return false;
-  }
-  for(let i = 0; i < refGain.length; i++) {
-    let g_val = Number.parseFloat(refGain[i], 10);
-    if(g_val < -100 || g_val > 100 || Number.isNaN(g_val)) {
-      document.getElementById('inputGainRefAntenna').classList.add('is-invalid');
-      return false;
-    }
-    refGain[i] = g_val;
-  }
-  document.getElementById('inputGainRefAntenna').classList.add('is-valid');
-  /* One reference gain for every measurement frequency */
-  if(testFrequency.length != refGain.length) {
-    document.getElementById('inputMeasureFrequency').classList.remove('is-valid', 'is-invalid');
-    document.getElementById('inputGainRefAntenna').classList.remove('is-valid', 'is-invalid');
-    document.getElementById('inputMeasureFrequency').classList.add('is-invalid');
-    document.getElementById('inputGainRefAntenna').classList.add('is-invalid');
+  });
+  if (!ok) {
     return false;
   }
 
-  init_plot(testFrequency, testFrequency.length);
-  
-  init_dropdown(testFrequency, testFrequency.length, elStartAngle, elStopAngle, elResolution, azAngle, azResolution);
-
-  return [ServerCommand.CmdCalib, filename, azAngle, azResolution, elStartAngle, elStopAngle, elResolution, startFrequency, stopFrequency, testFrequency, refGain, testFrequency.length];
-
+  /* Server treats empty or all zero names as "use timestamp" */
+  return [ServerCommand.CmdCalib, filename || '0'.repeat(24), azAngle, azResolution, elStart, elStop, elResolution,
+    startFrequency, stopFrequency, testFrequency, refGain, testFrequency.length];
 }
 
 function createPanData() {
-  document.getElementById('inputPanPosition').classList.remove('is-valid', 'is-invalid');
-  const pan = document.getElementById("inputPanPosition").valueAsNumber;
-  if(pan < 0 || pan > 360 || Number.isNaN(pan)) {
-    document.getElementById('inputPanPosition').classList.add('is-invalid');
-    return false;
-  }
-  document.getElementById('inputPanPosition').classList.add('is-valid');
-
-  return pan;
+  const pan = byId('inputPanPosition').valueAsNumber;
+  return mark(['inputPanPosition'], isIntIn(pan, 0, 360)) ? pan : false;
 }
 
 function createTiltData() {
-  document.getElementById('inputTiltPosition').classList.remove('is-valid', 'is-invalid');
-  const tilt = document.getElementById('inputTiltPosition').valueAsNumber;
-  if(tilt < -90 || tilt > 90 || Number.isNaN(tilt)) {
-    document.getElementById('inputTiltPosition').classList.add('is-invalid');
-    return false;
-  }
-  document.getElementById('inputTiltPosition').classList.add('is-valid');
-
-  return tilt;
+  const tilt = byId('inputTiltPosition').valueAsNumber;
+  return mark(['inputTiltPosition'], isIntIn(tilt, -90, 90)) ? tilt : false;
 }
 
 function app_status_handler(status) {
+  const enable = (id, on) => byId(id).classList.toggle('disabled', !on);
+  const has3dData = () => byId('elevationDropdown').childElementCount > 1;
   switch (status) {
     case AppStatus.Stopped:
-      document.getElementById('button_start').classList.add('disabled');
-      document.getElementById('button_pause').classList.add('disabled');
-      document.getElementById('button_stop').classList.add('disabled');
-      document.getElementById('button_calib').classList.remove('disabled');
-      document.getElementById('button_headcmd').classList.remove('disabled');
-      document.getElementById('button_data').classList.remove('disabled');
-      if(document.getElementById('elevationDropdown').childElementCount > 1) {
-        document.getElementById('button_data3d').classList.remove('disabled');
-      }
-      document.getElementById('button_pause').classList.replace('btn-warning', 'btn-light');
+      enable('button_start', false);
+      enable('button_pause', false);
+      enable('button_stop', false);
+      enable('button_calib', true);
+      enable('button_headcmd', true);
+      enable('button_data', true);
+      enable('button_data3d', has3dData());
+      byId('button_pause').classList.replace('btn-warning', 'btn-light');
       break;
     case AppStatus.Calibrated:
-      document.getElementById('button_start').classList.remove('disabled');
+      enable('button_start', true);
       break;
     case AppStatus.Running:
-      document.getElementById('button_data3d').classList.add('disabled');
-      document.getElementById('button_calib').classList.add('disabled');
-      document.getElementById('button_start').classList.add('disabled');
-      document.getElementById('button_headcmd').classList.add('disabled');
-      document.getElementById('button_stop').classList.remove('disabled');
-      document.getElementById('button_data').classList.remove('disabled');
-      if(document.getElementById('elevationDropdown').childElementCount > 1) {
-        document.getElementById('button_data3d').classList.remove('disabled');
-      }
-      document.getElementById('button_pause').classList.remove('disabled');
-      document.getElementById('button_pause').classList.replace('btn-warning', 'btn-light');
+      enable('button_calib', false);
+      enable('button_start', false);
+      enable('button_headcmd', false);
+      enable('button_stop', true);
+      enable('button_data', true);
+      enable('button_data3d', has3dData());
+      enable('button_pause', true);
+      byId('button_pause').classList.replace('btn-warning', 'btn-light');
       break;
     case AppStatus.Paused:
-      document.getElementById('button_pause').classList.replace('btn-light', 'btn-warning');
+      byId('button_pause').classList.replace('btn-light', 'btn-warning');
       break;
     default:
       break;
   }
 }
 
+/**
+ * Replace the entries of a dropdown list. items: [{ value, label }].
+ */
+function fillDropdown(listId, items, onClick) {
+  const list = byId(listId);
+  list.replaceChildren();
+  items.forEach(({ value, label }) => {
+    const li = document.createElement('li');
+    const button = document.createElement('button');
+    button.classList.add('dropdown-item');
+    button.setAttribute('type', 'button');
+    button.setAttribute('value', `${value}`);
+    button.textContent = label;
+    button.addEventListener('click', () => onClick(value));
+    li.appendChild(button);
+    list.appendChild(li);
+  });
+}
+
 function init_dropdown(frequency, len, elStart, elStop, elRes, azSector, azRes) {
-  var completeList = document.getElementById('frequencyDropdown');
-  while(completeList.childElementCount != 0) {
-    completeList.firstChild.remove();
-  }
-  for(let i = 0; i < len; i++) {
-    var li = document.createElement("li");
-    var button = document.createElement("button");
-    button.classList.add('dropdown-item');
-    button.setAttribute("type", "button");
-    button.setAttribute("value", `${frequency[i]}`);
-    button.setAttribute("id", `${frequency[i]}`);
-    button.innerText = `${frequency[i]}MHz`;
-    li.appendChild(button);
-    completeList.appendChild(li);
-    button.addEventListener('click', () => {
-      liveDataStatus = i;
-      draw_plot();
-    });
-  }
+  const selectFrequency = (index) => {
+    liveDataStatus = index;
+    draw_plot();
+  };
+  const frequencies = frequency.slice(0, len).map((f, i) => ({ value: i, label: `${f}MHz` }));
+  fillDropdown('frequencyDropdown', frequencies, selectFrequency);
+  fillDropdown('frequencyDropdown3d', frequencies, selectFrequency);
+  liveDataStatus = 0;
 
-  completeList = document.getElementById('frequencyDropdown3d');
-  while(completeList.childElementCount != 0) {
-    completeList.firstChild.remove();
+  const elevations = [];
+  for (let el = elStart; el <= elStop; el += elRes) {
+    elevations.push({ value: el, label: `${el}°` });
   }
-  for(let i = 0; i < len; i++) {
-    var li = document.createElement("li");
-    var button = document.createElement("button");
-    button.classList.add('dropdown-item');
-    button.setAttribute("type", "button");
-    button.setAttribute("value", `${frequency[i]}`);
-    button.setAttribute("id", `${frequency[i]}-3d`);
-    button.innerText = `${frequency[i]}MHz`;
-    li.appendChild(button);
-    completeList.appendChild(li);
-    button.addEventListener('click', () => {
-      liveDataStatus = i;
-      draw_plot();
-    });
-  }
-
-  completeList = document.getElementById('elevationDropdown');
-  while(completeList.childElementCount != 0) {
-    completeList.firstChild.remove();
-  }
-  for(let i = elStart; i <= elStop; i+=elRes) {
-    var li = document.createElement("li");
-    var button = document.createElement("button");
-    button.classList.add('dropdown-item');
-    button.setAttribute("type", "button");
-    button.setAttribute("value", `${i}`);
-    button.setAttribute("id", `${i}el`);
-    button.innerText = `${i}°`;
-    li.appendChild(button);
-    completeList.appendChild(li);
-    button.addEventListener('click', () => {
-      liveDataStatusEl = i;
-      draw_plot();
-    })
-  }
+  fillDropdown('elevationDropdown', elevations, (el) => {
+    liveDataStatusEl = el;
+    draw_plot();
+  });
   liveDataStatusEl = elStart;
 
-  completeList = document.getElementById('azimutDropdown');
-  while(completeList.childElementCount != 0) {
-    completeList.firstChild.remove();
+  /* Sector is centered on 0°, a full circle starts at 180° and must not repeat its first point */
+  const azStart = 360 - azSector / 2;
+  const azEnd = azSector / 2 + 360 - (azSector === 360 ? 1 : 0);
+  const azimuths = [];
+  for (let az = azStart; az <= azEnd; az += azRes) {
+    azimuths.push({ value: az % 360, label: `${az % 360}°` });
   }
-  var azStart = ((360 - (azSector / 2.0)));
-  var azStop = azSector / 2.0;
-  if(azStop < azStart || azSector == 360) {
-    azStop += 360;
-  }
-  for(let i = azStart; i <= azStop; i+=azRes) {
-    var li = document.createElement("li");
-    var button = document.createElement("button");
-    button.classList.add('dropdown-item');
-    button.setAttribute("type", "button");
-    button.setAttribute("value", `${(i%360)}`);
-    button.setAttribute("id", `${(i%360)}az`);
-    button.innerText = `${(i%360)}°`;
-    li.appendChild(button);
-    completeList.appendChild(li);
-    button.addEventListener('click', () => {
-      liveDataStatusAz = i % 360;
-      draw_plot();
-    })
-  }
-  liveDataStatusAz = azStart;
+  fillDropdown('azimutDropdown', azimuths, (az) => {
+    liveDataStatusAz = az;
+    draw_plot();
+  });
+  liveDataStatusAz = azStart % 360;
 }
 
 /**
@@ -592,49 +471,52 @@ function init_dropdown(frequency, len, elStart, elStop, elRes, azSector, azRes) 
  */
 document.addEventListener('DOMContentLoaded', () => {
   /* Add click event listeners to each button */
-  document.getElementById('button_calib').addEventListener('click', () => {
+  byId('button_calib').addEventListener('click', () => {
     const data = createDataFrame();
-    document.getElementById('progress').setAttribute("style", "width: 0%");
-    document.getElementById('progress').innerHTML = "0%";
-    document.getElementById('progress').setAttribute("aria-valuenow", "0");
-    if(data !== false) {
-      sendServerCommand(data); //calib receiver
+    if (data === false) {
+      return;
+    }
+    if (sendServerCommand(data)) {
+      setProgress(0);
+      init_plot(data[9], data[11]);
+      init_dropdown(data[9], data[11], data[4], data[5], data[6], data[2], data[3]);
     }
   });
-  document.getElementById('button_start').addEventListener('click', () => {
-    sendServerCommand([ServerCommand.CmdStart, 1]); //start measurement loop
-    document.getElementById('time').classList.replace('btn-outline-success', 'btn-outline-danger');
-    document.getElementById('time3d').classList.replace('btn-outline-success', 'btn-outline-danger');
+  byId('button_start').addEventListener('click', () => {
+    if (sendServerCommand([ServerCommand.CmdStart, 1])) {
+      setTimeButtonState(true);
+    }
   });
-  document.getElementById('button_pause').addEventListener('click', () => {
-    sendServerCommand([ServerCommand.CmdPause, 2]); //pause measurement loop
+  byId('button_pause').addEventListener('click', () => {
+    sendServerCommand([ServerCommand.CmdPause, 2]);
   });
-  document.getElementById('button_stop').addEventListener('click', () => {
-    sendServerCommand([ServerCommand.CmdStop, 3]); //stop measurement loop
-    document.getElementById('time').innerHTML = `Time Left: 0:00:00`;
-    document.getElementById('time3d').innerHTML = `Time Left: 0:00:00`;
+  byId('button_stop').addEventListener('click', () => {
+    if (sendServerCommand([ServerCommand.CmdStop, 3])) {
+      setBoth('time', 'Time Left: 0:00:00');
+    }
   });
-  document.getElementById('button_pan').addEventListener('click', () => {
+  byId('button_pan').addEventListener('click', () => {
     const data = createPanData();
-    if(data !== false) {
-      sendServerCommand([ServerCommand.CmdPan, data]); //set pan position
+    if (data !== false) {
+      sendServerCommand([ServerCommand.CmdPan, data]);
     }
   });
-  document.getElementById('button_tilt').addEventListener('click', () => {
+  byId('button_tilt').addEventListener('click', () => {
     const data = createTiltData();
-    if(data !== false) {
-      sendServerCommand([ServerCommand.CmdTilt, data]); //set tilt position
+    if (data !== false) {
+      sendServerCommand([ServerCommand.CmdTilt, data]);
     }
   });
-  document.getElementById('button_check').addEventListener('click', () => {
-    sendServerCommand([ServerCommand.CmdCheck, 6]); //self check
-    document.getElementById('button_check').classList.add('disabled');
+  byId('button_check').addEventListener('click', () => {
+    if (sendServerCommand([ServerCommand.CmdCheck, 6])) {
+      byId('button_check').classList.add('disabled');
+    }
   });
-  document.getElementById('button_home').addEventListener('click', () => {
-    sendServerCommand([ServerCommand.CmdHome, 7]); //home
-    document.getElementById('button_home').classList.add('disabled');
+  byId('button_home').addEventListener('click', () => {
+    if (sendServerCommand([ServerCommand.CmdHome, 7])) {
+      byId('button_home').classList.add('disabled');
+    }
   });
-  init_plot();
-  /* Finally, connect to weather station */
+  init_plot([], 0);
   wsConnect();
 });

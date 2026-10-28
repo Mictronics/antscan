@@ -143,6 +143,7 @@ void measurement_loop()
     scan_status = STOPPED;
     if(measurement_thread_exit == false) {
         app_message("Scan process finished.", MSG_SUCCESS);
+        app_done("scan");
     }
     measurement_thread_exit = false;
     free_freq();

@@ -1,11 +1,13 @@
+/* global Plotly, liveDataStatus, liveDataStatusEl, liveDataStatusAz */
+/* exported init_plot, append, draw_plot */
+
+/* Measurement data per frequency (MHz as string): { azimut: [], elevation: [], gain: [] } */
 let m_data = {};
-let r_data = {};
 /* Measurement frequencies in input order, index = dropdown selection */
 let freqList = [];
 
 function init_plot(testFrequency, len) {
     m_data = {};
-    r_data = {};
     freqList = [];
     for (let i = 0; i < len; i++) {
         freqList.push(`${testFrequency[i]}`);
@@ -13,325 +15,122 @@ function init_plot(testFrequency, len) {
             azimut: [],
             elevation: [],
             gain: []
-        }
-        r_data[`${testFrequency[i]}`] = {
-            x: [],
-            y: [],
-            z: []
-        }
+        };
     }
-    var data = [
-        {
-            r: [],
-            theta: [],
-            mode: 'lines',
-            line: { color: 'darkviolet' },
-            type: 'scatterpolar'
-        }
-    ]
-
-    var layout1 = {
-        autosize: false,
-        width: 500,
-        height: 500,
-        title: 'Measurement',
-        font: {
-            family: 'Arial, sans-serif;',
-            size: 12,
-            color: '#000'
-        },
-        showlegend: false,
-        polar: {
-            angularaxis: {
-                direction: "clockwise",
-                dtick: 30
-            }
-        }
-    };
-
-    var layout2 = {
-        autosize: false,
-        width: 500,
-        height: 500,
-        title: 'Measurement',
-        font: {
-            family: 'Arial, sans-serif;',
-            size: 12,
-            color: '#000'
-        },
-        showlegend: false,
-        polar: {
-            sector: [0, 180],
-            angularaxis: {
-                direction: "clockwise",
-                dtick: 30
-            }
-        }
-    };
-
-    Plotly.newPlot('dataField', data, layout1);
-    Plotly.newPlot('dataField2', data, layout2);
-
-    var data3d = [
-        {
-            opacity: 0.8,
-            color: 'rgb(300,100,200)',
-            type: 'mesh3d',
-            x: [],
-            y: [],
-            z: [],
-        }
-    ];
-
-    Plotly.newPlot('dataField3', data3d);
-}
-
-function deg2rad(degree) {
-    var rad = degree * (Math.PI / 180);
-    return rad;
-}
-
-function append(azimut, elevation, frequency, gain) {
-    if (!m_data[`${frequency}`]) {
-        return;
-    }
-    gain = parseFloat(gain.toFixed(1));
-    console.info(`rounded gain: ${gain}`);
-
-    m_data[`${frequency}`].azimut.push(azimut);
-    m_data[`${frequency}`].elevation.push(elevation);
-    m_data[`${frequency}`].gain.push(gain);
-
-    var xn = gain * Math.cos(deg2rad(elevation));
-    var yn = 0;
-    var zn = gain * Math.sin(deg2rad(elevation));
-
-    //Rotation Matrix X
-    var x = xn;
-    var y = Math.cos(deg2rad(azimut)) * yn - Math.sin(deg2rad(azimut)) * zn;
-    var z = Math.sin(deg2rad(azimut)) * yn + Math.cos(deg2rad(azimut)) * zn;
-
-    //remove last item
-    r_data[`${frequency}`].x.splice(-1, 1);
-    r_data[`${frequency}`].y.splice(-1, 1);
-    r_data[`${frequency}`].z.splice(-1, 1);
-
-    //append new values
-    r_data[`${frequency}`].x.push(x);
-    r_data[`${frequency}`].y.push(y);
-    r_data[`${frequency}`].z.push(z);
-
-    //add first item at the end
-    r_data[`${frequency}`].x.push(r_data[`${frequency}`].x[0]);
-    r_data[`${frequency}`].y.push(r_data[`${frequency}`].y[0]);
-    r_data[`${frequency}`].z.push(r_data[`${frequency}`].z[0]);
-
     draw_plot();
 }
 
+function deg2rad(degree) {
+    return degree * (Math.PI / 180);
+}
+
+function append(azimut, elevation, frequency, gain) {
+    const data = m_data[`${frequency}`];
+    if (!data) {
+        return;
+    }
+    data.azimut.push(azimut);
+    data.elevation.push(elevation);
+    data.gain.push(parseFloat(gain.toFixed(1)));
+    draw_plot();
+}
+
+function polarLayout(title, sector) {
+    const polar = { angularaxis: { direction: 'clockwise', dtick: 30 } };
+    if (sector) {
+        polar.sector = sector;
+    }
+    return {
+        autosize: false,
+        width: 500,
+        height: 500,
+        title,
+        font: { family: 'Arial, sans-serif', size: 12, color: '#000' },
+        showlegend: false,
+        polar
+    };
+}
+
+function polarTrace(radius, theta, thetaName) {
+    return [{
+        r: radius,
+        theta,
+        mode: 'lines',
+        line: { color: 'darkviolet', shape: 'spline', smoothing: 1.3 },
+        type: 'scatterpolar',
+        hovertemplate: `Gain: %{r:.1f}<br>${thetaName}: %{theta}`
+    }];
+}
+
+/**
+ * Gain over the angle of one axis while the other axis is fixed at fixedValue.
+ */
+function slice(data, fixedKey, fixedValue, varyKey) {
+    const radius = [];
+    const theta = [];
+    for (let i = 0; i < data.gain.length; i++) {
+        if (data[fixedKey][i] === fixedValue) {
+            radius.push(data.gain[i]);
+            theta.push(data[varyKey][i]);
+        }
+    }
+    return [radius, theta];
+}
+
+/**
+ * Surface on the elevation x azimut grid. Radius is the gain shifted so the weakest
+ * point sits at the origin (gain is in dB and can be negative). Cells not measured
+ * yet are null.
+ */
+function surface3d(data) {
+    const elIndex = new Map();
+    const azIndex = new Map();
+    data.elevation.forEach((el) => elIndex.has(el) || elIndex.set(el, elIndex.size));
+    data.azimut.forEach((az) => azIndex.has(az) || azIndex.set(az, azIndex.size));
+    const azList = [...azIndex.keys()];
+    /* A full circle: close the seam by repeating the first column */
+    const closed = azList.length > 2 && (azList[0] - azList[azList.length - 1] + 360) % 360 === (azList[1] - azList[0] + 360) % 360;
+    const cols = azList.length + (closed ? 1 : 0);
+    const grid = () => Array.from({ length: elIndex.size }, () => new Array(cols).fill(null));
+    const x = grid();
+    const y = grid();
+    const z = grid();
+    const r = grid();
+    const minGain = Math.min(...data.gain);
+    data.gain.forEach((gain, i) => {
+        const row = elIndex.get(data.elevation[i]);
+        const el = deg2rad(data.elevation[i]);
+        const az = deg2rad(data.azimut[i]);
+        const radius = gain - minGain;
+        const cells = [azIndex.get(data.azimut[i])];
+        if (closed && cells[0] === 0) {
+            cells.push(cols - 1);
+        }
+        cells.forEach((col) => {
+            x[row][col] = radius * Math.cos(el) * Math.cos(az);
+            y[row][col] = radius * Math.cos(el) * Math.sin(az);
+            z[row][col] = radius * Math.sin(el);
+            r[row][col] = radius;
+        });
+    });
+    return [{ type: 'surface', x, y, z, surfacecolor: r, colorscale: 'Viridis', showscale: false }];
+}
+
 function draw_plot() {
-    var frequency = freqList[liveDataStatus];
-    var predata = [
-        {
-            r: [],
-            theta: [],
-            mode: 'lines',
-            line: {
-                color: 'darkviolet',
-                shape: 'spline',
-                smoothing: 1.3
-            },
-            type: 'scatterpolar',
-            hovertemplate: 'Gain: %{r:.1f}<br>Azimut: %{theta}'
-        }
-    ]
-    var prelayout1 = {
-        autosize: false,
-        width: 500,
-        height: 500,
-        title: `Measurement data ${frequency}MHz`,
-        font: {
-            family: 'Arial, sans-serif;',
-            size: 12,
-            color: '#000'
-        },
-        showlegend: false,
-        polar: {
-            angularaxis: {
-                direction: "clockwise",
-                dtick: 30
-            }
-        }
-    };
-
-    var prelayout2 = {
-        autosize: false,
-        width: 500,
-        height: 500,
-        title: `Measurement data ${frequency}MHz`,
-        font: {
-            family: 'Arial, sans-serif;',
-            size: 12,
-            color: '#000'
-        },
-        showlegend: false,
-        polar: {
-            sector: [0, 180],
-            angularaxis: {
-                direction: "clockwise",
-                dtick: 30
-            }
-        }
-    };
-
-    var predata3d = [
-        {
-            opacity: 0.8,
-            color: 'rgb(300,100,200)',
-            type: 'mesh3d',
-            x: [],
-            y: [],
-            z: [],
-        }
-    ];
-
-    Plotly.react('dataField', predata, prelayout1);
-    Plotly.react('dataField2', predata, prelayout2);
-    Plotly.react('dataField3', predata3d);
-
-    var data1 = built_data1();
-    var layout1 = built_layout1();
-    var data2 = built_data2();
-    var layout2 = built_layout2();
-    var data3d = built_data3d();
-
-    Plotly.react('dataField', data1, layout1);
-    Plotly.react('dataField2', data2, layout2);
-    Plotly.react('dataField3', data3d);
-}
-
-function built_data1() {
-    var frequency = freqList[liveDataStatus];
-    var radius = [];
-    var theta2 = [];
-
-    for (let i = 0; i < m_data[frequency].gain.length; i++) {
-        if (m_data[frequency].elevation[i] == liveDataStatusEl) {
-            radius.push(m_data[frequency].gain[i]);
-            theta2.push(m_data[frequency].azimut[i]);
-        }
+    const frequency = freqList[liveDataStatus];
+    const data = m_data[frequency];
+    if (!data) {
+        Plotly.react('dataField', polarTrace([], [], 'Azimut'), polarLayout('Measurement'));
+        Plotly.react('dataField2', polarTrace([], [], 'Elevation'), polarLayout('Measurement', [0, 180]));
+        Plotly.react('dataField3', [{ type: 'scatter3d', x: [], y: [], z: [] }], { title: 'Measurement' });
+        return;
     }
-
-    var data = [
-        {
-            r: radius,
-            theta: theta2,
-            mode: 'lines',
-            line: {
-                color: 'darkviolet',
-                shape: 'spline',
-                smoothing: 1.3
-            },
-            type: 'scatterpolar',
-            hovertemplate: 'Gain: %{r:.1f}<br>Azimut: %{theta}'
-        }
-    ]
-
-    return data;
-}
-
-function built_data2() {
-    var frequency = freqList[liveDataStatus];
-    var radius = [];
-    var theta2 = [];
-
-    for (let i = 0; i < m_data[frequency].gain.length; i++) {
-        if (m_data[frequency].azimut[i] == liveDataStatusAz) {
-            radius.push(m_data[frequency].gain[i]);
-            theta2.push(m_data[frequency].elevation[i]);
-        }
-    }
-
-    var data = [
-        {
-            r: radius,
-            theta: theta2,
-            mode: 'lines',
-            line: {
-                color: 'darkviolet',
-                shape: 'spline',
-                smoothing: 1.3
-            },
-            type: 'scatterpolar',
-            hovertemplate: 'Gain: %{r:.1f}<br>Elevation: %{theta}'
-        }
-    ]
-
-    return data;
-}
-
-function built_layout1() {
-    var frequency = freqList[liveDataStatus];
-    var layout = {
-        autosize: false,
-        width: 500,
-        height: 500,
-        title: `Measurement data ${frequency}MHz, ${liveDataStatusEl}° elevation`,
-        font: {
-            family: 'Arial, sans-serif;',
-            size: 12,
-            color: '#000'
-        },
-        showlegend: false,
-        polar: {
-            angularaxis: {
-                direction: "clockwise",
-                dtick: 30
-            }
-        }
-    };
-
-    return layout;
-}
-
-function built_layout2() {
-    var frequency = freqList[liveDataStatus];
-    var layout = {
-        autosize: false,
-        width: 500,
-        height: 500,
-        title: `Measurement data ${frequency}MHz, ${liveDataStatusAz}° azimut`,
-        font: {
-            family: 'Arial, sans-serif;',
-            size: 12,
-            color: '#000'
-        },
-        showlegend: false,
-        polar: {
-            sector: [0, 180],
-            angularaxis: {
-                direction: "clockwise",
-                dtick: 30
-            }
-        }
-    };
-
-    return layout;
-}
-
-function built_data3d() {
-    var frequency = freqList[liveDataStatus];
-    var data = [
-        {
-            alphahull: 0,
-            opacity: 0.8,
-            color: 'rgb(300,100,200)',
-            type: 'mesh3d',
-            x: r_data[`${frequency}`].x,
-            y: r_data[`${frequency}`].y,
-            z: r_data[`${frequency}`].z,
-        }
-    ];
-
-    return data;
+    const [r1, theta1] = slice(data, 'elevation', liveDataStatusEl, 'azimut');
+    const [r2, theta2] = slice(data, 'azimut', liveDataStatusAz, 'elevation');
+    Plotly.react('dataField', polarTrace(r1, theta1, 'Azimut'),
+        polarLayout(`Measurement data ${frequency}MHz, ${liveDataStatusEl}° elevation`));
+    Plotly.react('dataField2', polarTrace(r2, theta2, 'Elevation'),
+        polarLayout(`Measurement data ${frequency}MHz, ${liveDataStatusAz}° azimut`, [0, 180]));
+    Plotly.react('dataField3', data.gain.length ? surface3d(data) : [{ type: 'scatter3d', x: [], y: [], z: [] }],
+        { title: `Measurement data ${frequency}MHz`, scene: { aspectmode: 'data' } });
 }
