@@ -35,6 +35,26 @@ static int num_clients = 0;
 static char ws_ip[20] = WS_DEFAULT_IP;
 static char head_ip[20] = "192.168.1.7";
 static int head_port = 8899;
+
+/* Host header values accepted on websocket connections (anti DNS rebinding), filled in main() */
+#define MAX_ALLOWED_HOSTS 8
+#define MAX_HOST_LEN 64
+static char extra_hosts[MAX_ALLOWED_HOSTS][MAX_HOST_LEN];
+static int num_extra_hosts = 0;
+static char allowed_hosts[MAX_ALLOWED_HOSTS + 3][MAX_HOST_LEN + 8];
+static int num_allowed_hosts = 0;
+
+static bool host_allowed(const char *host)
+{
+    for (int i = 0; i < num_allowed_hosts; i++)
+    {
+        if (strcasecmp(host, allowed_hosts[i]) == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
 static struct sockaddr_in ws_in;
 
 struct lws_context *context;
@@ -488,13 +508,23 @@ static int callback_broadcast(struct lws *wsi, enum lws_callback_reasons reason,
     {
     case LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION:
     {
-        /* Browsers send Origin: only accept pages served by this server (blocks cross-site websockets) */
-        char origin[128], host[128];
-        if (lws_hdr_copy(wsi, origin, sizeof(origin), WSI_TOKEN_ORIGIN) > 0)
+        /* Host must be one we serve (DNS rebinding), and a browser's Origin must be that same host
+         * (cross-site websocket). Origin may be absent only for non-browser clients. */
+        char origin[128], host[MAX_HOST_LEN + 8];
+        if (lws_hdr_copy(wsi, host, sizeof(host), WSI_TOKEN_HOST) <= 0 || !host_allowed(host))
         {
+            lwsl_notice("Rejected websocket for unknown Host\n");
+            return -1;
+        }
+        if (lws_hdr_total_length(wsi, WSI_TOKEN_ORIGIN) > 0)
+        {
+            if (lws_hdr_copy(wsi, origin, sizeof(origin), WSI_TOKEN_ORIGIN) <= 0)
+            {
+                return -1;
+            }
             const char *origin_host = strstr(origin, "://");
             origin_host = origin_host ? origin_host + 3 : origin;
-            if (lws_hdr_copy(wsi, host, sizeof(host), WSI_TOKEN_HOST) <= 0 || strcmp(origin_host, host) != 0)
+            if (strcasecmp(origin_host, host) != 0)
             {
                 lwsl_notice("Rejected websocket from foreign origin %s\n", origin);
                 return -1;
@@ -710,6 +740,13 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
         snprintf(head_ip, sizeof(head_ip), "%s", arg);
         break;
     }
+    case OPT_ALLOW_HOST:
+        if (strlen(arg) >= MAX_HOST_LEN || num_extra_hosts >= MAX_ALLOWED_HOSTS)
+        {
+            argp_error(state, "Invalid or too many --allow-host");
+        }
+        strcpy(extra_hosts[num_extra_hosts++], arg);
+        break;
     case OPT_RECEIVER:
         if (strlen(arg) >= sizeof(receiver_resource))
         {
@@ -757,6 +794,16 @@ int main(int argc, char **argv)
     if (argp_parse(&argp, argc, argv, 0, 0, 0))
     {
         exit(EXIT_SUCCESS);
+    }
+
+    const char *own_hosts[] = {"localhost", "127.0.0.1", ws_ip};
+    for (size_t i = 0; i < sizeof(own_hosts) / sizeof(own_hosts[0]); i++)
+    {
+        snprintf(allowed_hosts[num_allowed_hosts++], sizeof(allowed_hosts[0]), "%s:%d", own_hosts[i], ws_in.sin_port);
+    }
+    for (int i = 0; i < num_extra_hosts; i++)
+    {
+        snprintf(allowed_hosts[num_allowed_hosts++], sizeof(allowed_hosts[0]), "%s:%d", extra_hosts[i], ws_in.sin_port);
     }
 
     if(create_socket() == -1)

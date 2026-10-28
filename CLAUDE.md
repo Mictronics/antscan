@@ -11,7 +11,7 @@ Antscan automates antenna gain-pattern measurements: a pan-tilt head positions t
 Run everything from the repo root (paths in the Makefile and data output are root-relative).
 
 - Build server: `make` (produces `server/antscan`); `make clean`
-- Run server from the repo root: `./server/antscan` (options: `--ws-ip`, `--ws-port`, `--head-ip`, `--head-port`, `--receiver`; websocket default `127.0.0.1:10024`). It also serves `./client` over HTTP on the same port, so open `http://127.0.0.1:10024/`; websocket connections from other origins are rejected.
+- Run server from the repo root: `./server/antscan` (options: `--ws-ip`, `--ws-port`, `--allow-host`, `--head-ip`, `--head-port`, `--receiver`; websocket default `127.0.0.1:10024`). It also serves `./client` over HTTP on the same port, so open `http://127.0.0.1:10024/`; websocket connections are only accepted for Host `localhost`/`127.0.0.1`/`--ws-ip` (plus `--allow-host NAME`, repeatable, needed when opening the UI via a LAN hostname) and a browser's Origin must equal that Host.
 - Lint client: `npm install && npm run lint` (eslint:recommended, `client/` only, vendors ignored; remaining errors are cross-file globals like `Plotly` since scripts aren't modules)
 - Diagrams: `design/*.plantuml` render into `out/design/` (PlantUML, SVG committed)
 
